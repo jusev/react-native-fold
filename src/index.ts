@@ -165,6 +165,17 @@ export type FoldSignals = {
    * need to write this rule itself.
    */
   chromeSide: "left" | "right" | null;
+  /**
+   * The window's safe-area insets, read at the same instant as everything
+   * else here.
+   *
+   * The same numbers react-native-safe-area-context gives you. They are
+   * included so that a caller comparing an inset against a region is
+   * comparing two things measured in the same layout pass, and so that a
+   * debug view can draw both without pulling in a second dependency. Use
+   * whichever source you prefer; they do not disagree.
+   */
+  insets: { top: number; right: number; bottom: number; left: number };
   source: "native" | "fallback";
 };
 
@@ -301,6 +312,7 @@ const NO_FOLD: FoldSignals = {
   topChrome: null,
   outerSide: null,
   chromeSide: null,
+  insets: { top: 0, right: 0, bottom: 0, left: 0 },
   source: "fallback",
 };
 
@@ -381,6 +393,12 @@ export function getFoldSignals(): FoldSignals {
     topChrome: topChromeOf(regions, window.width),
     outerSide,
     chromeSide,
+    insets: {
+      top: window.insetTop,
+      right: window.insetRight,
+      bottom: window.insetBottom,
+      left: window.insetLeft,
+    },
     source: "native",
   };
 }
@@ -434,3 +452,5 @@ export function useFoldSignals(): FoldSignals {
 
   return useMemo(() => signals, [signals]);
 }
+
+export { default as FoldDebugOverlay } from "./FoldDebugOverlay";
