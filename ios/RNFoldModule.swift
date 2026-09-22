@@ -54,8 +54,40 @@ public class RNFoldModule: Module {
     // The window's size, so the JS side can express the halves a fold leaves
     // without having to reconcile two sources of truth for the same window.
     Function("getWindowSize") { () -> [String: Any] in
-      let bounds = RNFoldModule.keyWindow()?.bounds ?? .zero
-      return ["width": bounds.width, "height": bounds.height]
+      guard let window = RNFoldModule.keyWindow() else {
+        return ["width": 0, "height": 0, "x": 0, "y": 0, "screenWidth": 0, "screenHeight": 0]
+      }
+      let bounds = window.bounds
+      // Where this window sits ON THE DISPLAY.
+      //
+      // Not window.frame: a window sharing the display with another app is
+      // given its own coordinate space, so its frame origin is {0, 0}
+      // whichever half it occupies, and an app cannot tell which side of the
+      // screen it is on. Converting into the screen's coordinate space is
+      // what actually answers it.
+      //
+      // coordinateSpace, not fixedCoordinateSpace: the fixed one is locked to
+      // the device's portrait origin, so on a landscape display the offset
+      // comes back on the other axis and a left/right question gets a
+      // top/bottom answer.
+      let screen = window.windowScene?.screen ?? window.screen
+      let onScreen = window.convert(bounds, to: screen.coordinateSpace)
+      // The insets come along too, so the package can answer "which edge does
+      // my chrome go on" by itself rather than asking the app to combine two
+      // facts it should not have to know are related.
+      let safeArea = window.safeAreaInsets
+      return [
+        "width": bounds.width,
+        "height": bounds.height,
+        "x": onScreen.origin.x,
+        "y": onScreen.origin.y,
+        "screenWidth": screen.bounds.width,
+        "screenHeight": screen.bounds.height,
+        "insetTop": safeArea.top,
+        "insetRight": safeArea.right,
+        "insetBottom": safeArea.bottom,
+        "insetLeft": safeArea.left,
+      ]
     }
 
     // Whether the running OS can answer at all. Callers fall back to their

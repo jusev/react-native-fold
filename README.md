@@ -114,6 +114,8 @@ type FoldSignals = {
 | `halves` | the two usable rects the crease leaves, so you can place into one without recomputing geometry |
 | `railReserve` | how far down a side rail the system's own chrome reaches, in points |
 | `topChrome` | the free strip beside corner-anchored status chrome: `{ side, width, top, height, reserved, estimated }` |
+| `chromeSide` | **which edge your own toolbar belongs on** — `"left"`, `"right"`, or `null` for across the top |
+| `outerSide` | which display edge this window is against, when it shares the display |
 | `source` | `"native"` when the OS answered, `"fallback"` when it could not |
 
 **A region is a box, not a layout.** Its frame is the space the system claimed; it says nothing about where inside that space the clock and the glyphs are drawn, and on iOS 27.1 the margins that might have said so come back zero. They are not centred in it: the top of a reservation in a screen corner falls under the display's corner curve, which is private to UIKit, so the glyphs sit low in the box. A bar matched to the reservation rides visibly above the clock it shares a line with.
@@ -178,6 +180,24 @@ const insets = useSafeAreaInsets();
 `topChrome` is `null` whenever the reserved thing is **centred**, because then the free space is two strips with the chrome between them and a single row cannot use it without straddling. That is the ordinary phone, and it takes the `insets.top` branch above.
 
 ### 3. A side rail — a toolbar down the edge
+
+Read `chromeSide` and put your toolbar there. That is the whole rule:
+
+```tsx
+const { chromeSide, railReserve } = useFoldSignals();
+
+if (chromeSide === null) return <TopBar />;      // an ordinary phone
+return <Rail side={chromeSide} />;
+```
+
+`chromeSide` already combines the two unrelated-looking facts that decide it, so an app never writes this rule itself:
+
+- a display whose system chrome runs **down one side** reserves that strip, and your glyphs belong in the same column rather than starting a second one beside it;
+- a window **sharing the display** with another app has one outer edge and one split boundary, and chrome belongs on the outer one — the app on the left of a split reaches left, the app on the right reaches right.
+
+That second case is invisible to every other API. A split boundary reserves nothing, so both insets read `0` and the two halves are identical; and the system hands a shared-display window its **own coordinate space**, so `window.frame.origin` is `{0, 0}` whichever side you are on. The package converts the window into the screen's coordinate space, which is the one thing that answers it.
+
+Here is the full rail, with `railReserve` clearing the system's own glyphs at the head of the column:
 
 When the system's chrome runs down an edge, the platform's own layout puts yours in the same column rather than starting a second one beside it. `railReserve` is how far down that column the system reaches — the number that otherwise gets hard-coded, and the one that differs between a single device's two displays.
 
@@ -318,7 +338,7 @@ jest.mock("@jusev/react-native-fold", () => ({
     foldAxis: "book",
     halves: { first: { x: 0, y: 0, width: 380, height: 900 },
               second: { x: 404, y: 0, width: 380, height: 900 } },
-    railReserve: 0, topChrome: null, source: "native",
+    railReserve: 0, topChrome: null, outerSide: null, chromeSide: null, source: "native",
   }),
 }));
 ```
@@ -331,6 +351,7 @@ jest.mock("@jusev/react-native-fold", () => ({
 | **iOS < 27.1** | fallback: flat shape, `source: "fallback"` |
 | **Android** | not yet. A hinge is invisible to Android's safe-area API too, and the same argument applies there; Jetpack WindowManager's `FoldingFeature` is the route, behind this same API |
 | **Web / JS-only** | fallback |
+| **Split View / shared display** | `outerSide` and `chromeSide` on iOS 27.1+; `null` under fallback |
 
 ## Status
 

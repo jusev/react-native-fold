@@ -122,6 +122,49 @@ export type FoldSignals = {
   railReserve: number;
   /** A free strip beside corner-anchored system chrome, when there is one. */
   topChrome: TopChrome | null;
+  /**
+   * Which display edge this window is flush against, when it is against one
+   * and not the other.
+   *
+   * A window that shares the display with another app has one edge against
+   * the display and one against the other app. Chrome belongs on the outer
+   * one — the app on the left of a split reaches for its left edge, the app
+   * on the right for its right — and nothing else reports which is which.
+   *
+   * The safe-area insets cannot answer it: a split boundary reserves
+   * nothing, so both sides read 0 and the two halves look identical. Nor can
+   * the window's frame, because the system gives a shared-display window its
+   * own coordinate space and its origin is {0, 0} on either side. This comes
+   * from converting the window into the screen's coordinate space, which is
+   * the one thing that does.
+   *
+   * Null when the window spans the full width, which is every app running on
+   * its own, so a caller falls through to whatever it already did.
+   */
+  outerSide: "left" | "right" | null;
+  /**
+   * Which edge of this window the app's own chrome belongs on — a rail, a
+   * toolbar, the controls someone reaches for. Null means across the top,
+   * the way a phone has always done it.
+   *
+   * This is the one to read. It is the answer to a question an app actually
+   * asks, and it already combines the two unrelated-looking facts that
+   * decide it:
+   *
+   *   - a display whose system chrome runs down one side reserves that
+   *     strip, and the app's own glyphs belong in the same column rather
+   *     than starting a second one beside it;
+   *   - a window sharing the display with another app has an outer edge and
+   *     a split boundary, and chrome belongs on the outer one — the app on
+   *     the left of a split reaches left, the app on the right reaches
+   *     right.
+   *
+   * The reserved strip wins where there is one, because that is a column the
+   * system has already committed to. `outerSide` and the insets remain
+   * available for an app that wants to decide differently, but no app should
+   * need to write this rule itself.
+   */
+  chromeSide: "left" | "right" | null;
   source: "native" | "fallback";
 };
 
@@ -148,8 +191,22 @@ type NativeRegion = {
 
 type NativeModule = {
   getReservedRegions: () => NativeRegion[];
-  /** The window's own size, so halves can be expressed without asking JS. */
-  getWindowSize: () => { width: number; height: number };
+  /**
+   * The window's size AND where it sits on the display, so halves can be
+   * expressed without asking JS and a shared display can be reasoned about.
+   */
+  getWindowSize: () => {
+    width: number;
+    height: number;
+    x: number;
+    y: number;
+    screenWidth: number;
+    screenHeight: number;
+    insetTop: number;
+    insetRight: number;
+    insetBottom: number;
+    insetLeft: number;
+  };
   isSupported: () => boolean;
   // Emitted by the package's own observer, which re-queries the regions when
   // UIKit lays the window out — a fold, a rotation, a Split View resize.
@@ -242,6 +299,8 @@ const NO_FOLD: FoldSignals = {
   halves: null,
   railReserve: 0,
   topChrome: null,
+  outerSide: null,
+  chromeSide: null,
   source: "fallback",
 };
 
@@ -275,6 +334,24 @@ export function getFoldSignals(): FoldSignals {
           };
   }
 
+  // Flush to one display edge and not the other: that edge is the outer one.
+  // Against both, the window fills the display and there is nothing to say.
+  const FLUSH = 1;
+  const againstLeft = window.x <= FLUSH;
+  const againstRight = window.x + window.width >= window.screenWidth - FLUSH;
+  const outerSide: FoldSignals["outerSide"] = againstLeft === againstRight ? null : againstLeft ? "left" : "right";
+
+  // A side "carries chrome" only when it is meaningfully wider than the
+  // other. Not `left !== right`: a rounding difference between edges is not
+  // a rail, and treating it as one makes the answer flap between frames.
+  const RAIL_MIN_INSET = 24;
+  const reserved: FoldSignals["chromeSide"] =
+    window.insetRight >= RAIL_MIN_INSET && window.insetRight > window.insetLeft
+      ? "right"
+      : window.insetLeft >= RAIL_MIN_INSET && window.insetLeft > window.insetRight
+        ? "left"
+        : null;
+
   return {
     regions,
     hasFold: fold !== null,
@@ -283,6 +360,8 @@ export function getFoldSignals(): FoldSignals {
     halves,
     railReserve,
     topChrome: topChromeOf(regions, window.width),
+    outerSide,
+    chromeSide: reserved ?? outerSide,
     source: "native",
   };
 }
