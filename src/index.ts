@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Dimensions, type EmitterSubscription } from "react-native";
+import { Dimensions } from "react-native";
 import { requireOptionalNativeModule } from "expo-modules-core";
 
 /**
@@ -67,6 +67,9 @@ type NativeRegion = {
 type NativeModule = {
   getReservedRegions: () => NativeRegion[];
   isSupported: () => boolean;
+  // Emitted by the package's own observer, which re-queries the regions when
+  // UIKit lays the window out — a fold, a rotation, a Split View resize.
+  addListener: (event: "onReservedRegionsChange", listener: (payload: { regions: NativeRegion[] }) => void) => { remove: () => void };
 };
 
 // Optional on purpose: this package must not be the reason an app fails to
@@ -111,38 +114,37 @@ export function useFoldSignals(): FoldSignals {
 
   useEffect(() => {
     let cancelled = false;
-    const timers: ReturnType<typeof setTimeout>[] = [];
-
-    // UIKit posts no notification when reserved regions change — it expects
-    // a view to re-query them during layout. From JS the nearest signal is a
-    // window resize, and that arrives BEFORE the window has finished moving
-    // to the other display: a single read at that moment returns the regions
-    // of the display being left, which is how a fold ends up with the other
-    // panel's reserve and the app draws under the status glyphs.
-    //
-    // So the change starts a short sequence of reads rather than one, and
-    // each replaces the last. It converges on the settled value within a few
-    // hundred milliseconds, and reads nothing at all while the device is
-    // still.
-    //
-    // This is a stopgap and should be said plainly: the correct fix is a
-    // native view that re-queries in layoutSubviews and emits, which removes
-    // the guesswork about when to look. Until this package has one, a fold is
-    // the only moment it can be wrong, and only briefly.
     const refresh = () => {
       if (!cancelled) setSignals(getFoldSignals());
     };
-    const refreshSoon = () => {
+
+    // The native observer is the real signal. UIKit posts no notification
+    // when reserved regions change — it expects a view to re-query them
+    // while laying out — so the package installs a view of its own and
+    // reports from inside that layout pass. Consumers do not render
+    // anything, do not subscribe to anything else, and do not have to guess
+    // when a fold has finished.
+    //
+    // Guessing is what this replaced: a window resize arrives BEFORE the
+    // window has moved to the other display, so reading then returns the
+    // regions of the panel being left. That is not a timing that can be
+    // waited out reliably from JS, which is why it belongs here.
+    if (native?.addListener) {
+      const subscription = native.addListener("onReservedRegionsChange", refresh);
       refresh();
-      for (const delay of [16, 120, 350]) timers.push(setTimeout(refresh, delay));
-    };
+      return () => {
+        cancelled = true;
+        subscription.remove();
+      };
+    }
 
-    const subscription = Dimensions.addEventListener("change", refreshSoon);
-    refreshSoon();
-
+    // Without the native module there is nothing to observe, but the frame
+    // can still change and a caller may key off `source`. Dimensions is
+    // enough for that, and costs nothing when nothing moves.
+    const subscription = Dimensions.addEventListener("change", refresh);
+    refresh();
     return () => {
       cancelled = true;
-      for (const timer of timers) clearTimeout(timer);
       subscription.remove();
     };
   }, []);

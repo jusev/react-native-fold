@@ -23,8 +23,26 @@ import UIKit
  what React Native lays out in, so callers need no conversion.
  */
 public class RNFoldModule: Module {
+  private var observer: RNFoldObserverView?
+  // The last set sent, so layout passes that change nothing stay silent.
+  // layoutSubviews runs often; a re-render per pass would be a cost this
+  // package imposed on every app using it.
+  private var lastSent: [[String: Any]]?
+
   public func definition() -> ModuleDefinition {
     Name("RNFold")
+
+    Events("onReservedRegionsChange")
+
+    // The observer is installed while JS is listening and removed when it
+    // stops, so an app that never asks pays nothing.
+    OnStartObserving {
+      DispatchQueue.main.async { self.attachObserver() }
+    }
+
+    OnStopObserving {
+      DispatchQueue.main.async { self.detachObserver() }
+    }
 
     // Synchronous on purpose. Layout needs this on the first frame, and a
     // promise would mean rendering once with no regions and again with them
@@ -39,6 +57,31 @@ public class RNFoldModule: Module {
       if #available(iOS 27.1, *) { return true }
       return false
     }
+  }
+
+  private func attachObserver() {
+    guard observer == nil, let window = RNFoldModule.keyWindow() else { return }
+    let view = RNFoldObserverView()
+    view.frame = window.bounds
+    view.onLayout = { [weak self] in self?.emitIfChanged() }
+    // At the back, under everything the app draws.
+    window.insertSubview(view, at: 0)
+    observer = view
+    emitIfChanged()
+  }
+
+  private func detachObserver() {
+    observer?.onLayout = nil
+    observer?.removeFromSuperview()
+    observer = nil
+    lastSent = nil
+  }
+
+  private func emitIfChanged() {
+    let regions = RNFoldModule.reservedRegions()
+    if let previous = lastSent, NSArray(array: previous).isEqual(to: regions) { return }
+    lastSent = regions
+    sendEvent("onReservedRegionsChange", ["regions": regions])
   }
 
   private static func keyWindow() -> UIWindow? {
