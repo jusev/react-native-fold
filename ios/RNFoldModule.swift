@@ -51,6 +51,13 @@ public class RNFoldModule: Module {
       RNFoldModule.reservedRegions()
     }
 
+    // The window's size, so the JS side can express the halves a fold leaves
+    // without having to reconcile two sources of truth for the same window.
+    Function("getWindowSize") { () -> [String: Any] in
+      let bounds = RNFoldModule.keyWindow()?.bounds ?? .zero
+      return ["width": bounds.width, "height": bounds.height]
+    }
+
     // Whether the running OS can answer at all. Callers fall back to their
     // own guesses when it cannot, and should say so rather than pretend.
     Function("isSupported") { () -> Bool in

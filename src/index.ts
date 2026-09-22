@@ -41,6 +41,39 @@ export type FoldSignals = {
   /** The fold's rect, for layouts that must keep content out of it. */
   fold: ReservedRegion | null;
   /**
+   * Which way the fold runs, when there is one.
+   *
+   * The same division region means two quite different things depending on
+   * its axis, and Apple's guidance differs for each:
+   *
+   *   "book"      a vertical fold — the device held part-open like a book.
+   *               Keep content and controls off the crease; put alerts on
+   *               the trailing half, where the experience continues as the
+   *               device closes onto the outer display.
+   *
+   *   "tabletop"  a horizontal fold — one half standing the other up on a
+   *               surface. The upper half is read at a distance, the lower
+   *               half is where a hand rests, so content belongs above and
+   *               controls below.
+   *
+   * Derived from the region's own shape rather than from any device or
+   * pose enum: a fold taller than it is wide divides left from right.
+   */
+  foldAxis: "book" | "tabletop" | null;
+  /**
+   * The usable areas the fold leaves, in window coordinates.
+   *
+   * Two rects for a folded device and none otherwise, so a layout can place
+   * things in a half without recomputing the geometry — and without ever
+   * straddling the crease, which is the one thing Apple asks not to do.
+   */
+  halves: { first: Rect; second: Rect } | null;
+  railReserve: number;
+  source: "native" | "fallback";
+};
+
+export type Rect = { x: number; y: number; width: number; height: number };
+  /**
    * How far down a side rail the system's own chrome reaches, in points.
    *
    * This is the number that otherwise gets hard-coded. It is the bottom of
@@ -48,10 +81,6 @@ export type FoldSignals = {
    * Island, the clock, the Wi-Fi glyph — so an app placing a toolbar under
    * them can ask instead of measuring a screenshot. 0 when nothing is there.
    */
-  railReserve: number;
-  source: "native" | "fallback";
-};
-
 type NativeRegion = {
   kind: ReservedRegionKind;
   x: number;
@@ -66,6 +95,8 @@ type NativeRegion = {
 
 type NativeModule = {
   getReservedRegions: () => NativeRegion[];
+  /** The window's own size, so halves can be expressed without asking JS. */
+  getWindowSize: () => { width: number; height: number };
   isSupported: () => boolean;
   // Emitted by the package's own observer, which re-queries the regions when
   // UIKit lays the window out — a fold, a rotation, a Split View resize.
@@ -88,10 +119,18 @@ const toRegion = (r: NativeRegion): ReservedRegion => ({
 /** A region counts as sitting at the head of the window if it starts there. */
 const startsAtTop = (region: ReservedRegion) => region.y <= 1;
 
+const NO_FOLD: FoldSignals = {
+  regions: [],
+  hasFold: false,
+  fold: null,
+  foldAxis: null,
+  halves: null,
+  railReserve: 0,
+  source: "fallback",
+};
+
 export function getFoldSignals(): FoldSignals {
-  if (!native?.isSupported?.()) {
-    return { regions: [], hasFold: false, fold: null, railReserve: 0, source: "fallback" };
-  }
+  if (!native?.isSupported?.()) return NO_FOLD;
 
   const regions = native.getReservedRegions().map(toRegion);
   const fold = regions.find((region) => region.kind === "division") ?? null;
@@ -99,7 +138,28 @@ export function getFoldSignals(): FoldSignals {
     .filter((region) => region.kind === "occlusion" && startsAtTop(region))
     .reduce((deepest, region) => Math.max(deepest, region.y + region.height), 0);
 
-  return { regions, hasFold: fold !== null, fold, railReserve, source: "native" };
+  // A fold taller than it is wide runs down the display and divides left
+  // from right; a wider one runs across and divides top from bottom. Read
+  // off the region's own shape, so a device that folds some other way needs
+  // no new case here.
+  const foldAxis = fold === null ? null : fold.height >= fold.width ? "book" : "tabletop";
+
+  let halves: FoldSignals["halves"] = null;
+  if (fold && foldAxis) {
+    const window = native.getWindowSize();
+    halves =
+      foldAxis === "book"
+        ? {
+            first: { x: 0, y: 0, width: fold.x, height: window.height },
+            second: { x: fold.x + fold.width, y: 0, width: window.width - (fold.x + fold.width), height: window.height },
+          }
+        : {
+            first: { x: 0, y: 0, width: window.width, height: fold.y },
+            second: { x: 0, y: fold.y + fold.height, width: window.width, height: window.height - (fold.y + fold.height) },
+          };
+  }
+
+  return { regions, hasFold: fold !== null, fold, foldAxis, halves, railReserve, source: "native" };
 }
 
 /**
