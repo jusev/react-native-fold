@@ -34,6 +34,57 @@ export type ReservedRegion = {
   margins: { top: number; right: number; bottom: number; left: number };
 };
 
+/**
+ * The free strip along the top edge, when the system's chrome sits in a
+ * corner rather than across the whole width.
+ *
+ * The top safe-area INSET is conservative: it pushes content below the full
+ * height of whatever is up there, across the entire width. The reserved
+ * REGION is precise. When that region is flush to one side — as the status
+ * glyphs are on a folded device held in portrait — the rest of the top edge
+ * is free, and an app's own bar can sit BESIDE the system's chrome instead
+ * of below it, on the same line.
+ *
+ * Null when nothing is reserved, and null when the reserved thing is
+ * centred, as a Dynamic Island is on an ordinary phone: there the free space
+ * is two strips rather than one, and a row cannot use it without straddling.
+ */
+export type TopChrome = {
+  /** Which side of the top edge is FREE — where the app's bar goes. */
+  side: "left" | "right";
+  /** How wide that free strip is, in points. */
+  width: number;
+  /**
+   * Where the system's glyphs actually begin, in points from the top of the
+   * window.
+   *
+   * This is the number that makes a bar beside the clock line up with it
+   * rather than riding high. Pad a bar by `top`, give its row `height`, and
+   * the two sit on one line.
+   */
+  top: number;
+  /** How tall the glyph band is, below `top`. */
+  height: number;
+  /**
+   * The full depth of the reservation, glyph band and all.
+   *
+   * Use it for the bar's own height — the surface should cover everything
+   * the system claimed, even the part above the glyphs — while `top` and
+   * `height` place the row inside it.
+   */
+  reserved: number;
+  /**
+   * True when the glyph band was ESTIMATED rather than reported.
+   *
+   * The system reserves a box and does not say where within it it draws.
+   * Where it reports margins, the band is read from them and this is false.
+   * Where the margins come back zero — which is what iOS 27.1 does today —
+   * the band is placed by the rule below and this is true, so an app that
+   * would rather align to the reservation itself can tell the difference.
+   */
+  estimated: boolean;
+};
+
 export type FoldSignals = {
   regions: ReservedRegion[];
   /** True when the system declares a division — a fold, a hinge, a seam. */
@@ -69,6 +120,8 @@ export type FoldSignals = {
    */
   halves: { first: Rect; second: Rect } | null;
   railReserve: number;
+  /** A free strip beside corner-anchored system chrome, when there is one. */
+  topChrome: TopChrome | null;
   source: "native" | "fallback";
 };
 
@@ -119,6 +172,68 @@ const toRegion = (r: NativeRegion): ReservedRegion => ({
 /** A region counts as sitting at the head of the window if it starts there. */
 const startsAtTop = (region: ReservedRegion) => region.y <= 1;
 
+/**
+ * The strip left free beside chrome that hugs one corner of the top edge.
+ *
+ * Strict on purpose. The region has to start at the top, and every top
+ * region has to be flush against the SAME side; otherwise what remains is
+ * two strips with the chrome between them, and a single row cannot sit in
+ * that without crossing it.
+ */
+// Where the system draws inside a reservation it will not describe.
+//
+// A reserved region is a box the system has claimed; it carries no
+// information about where within that box the clock and the status glyphs
+// are laid out, and on iOS 27.1 the margins that might have said so come
+// back zero. Measured against the device, the glyphs sit LOW in the box —
+// the top of a reservation in a screen corner falls under the display's
+// corner curve, which is private to UIKit — so a row centred in the box
+// rides visibly above the clock it is supposed to share a line with.
+//
+// These two place the band where the glyphs actually are: a status
+// cluster's height, sitting just off the bottom of the reservation, which
+// is where system status content sits on every iPhone. They are the only
+// hand-measured numbers in this package, they are here rather than in any
+// app that uses it, and `estimated` on the result says when they were used.
+// The moment the system reports real margins, they are ignored.
+const GLYPH_BAND = 48;
+const GLYPH_BOTTOM_GAP = 10;
+
+function topChromeOf(regions: ReservedRegion[], windowWidth: number): TopChrome | null {
+  const top = regions.filter((region) => region.kind === "occlusion" && startsAtTop(region));
+  if (top.length === 0) return null;
+
+  const FLUSH = 1;
+  const leftFlush = top.every((region) => region.x <= FLUSH);
+  const rightFlush = top.every((region) => region.x + region.width >= windowWidth - FLUSH);
+  // Centred chrome fails both — the ordinary phone, and meant to fail.
+  if (leftFlush === rightFlush) return null;
+
+  const reserved = Math.max(...top.map((region) => region.y + region.height));
+
+  // A region's frame INCLUDES its margins, so where they are reported the
+  // glyphs sit inside it rather than filling it, and the band is read
+  // straight off them.
+  const reported = top.some((region) => region.margins.top > 0 || region.margins.bottom > 0);
+  const bandBottom = reported
+    ? Math.max(...top.map((region) => region.y + region.height - region.margins.bottom))
+    : Math.max(0, reserved - GLYPH_BOTTOM_GAP);
+  const bandTop = reported
+    ? Math.min(...top.map((region) => region.y + region.margins.top))
+    : Math.max(0, bandBottom - GLYPH_BAND);
+
+  return {
+    side: leftFlush ? "right" : "left",
+    width: leftFlush
+      ? windowWidth - Math.max(...top.map((region) => region.x + region.width))
+      : Math.min(...top.map((region) => region.x)),
+    top: bandTop,
+    height: bandBottom - bandTop,
+    reserved,
+    estimated: !reported,
+  };
+}
+
 const NO_FOLD: FoldSignals = {
   regions: [],
   hasFold: false,
@@ -126,6 +241,7 @@ const NO_FOLD: FoldSignals = {
   foldAxis: null,
   halves: null,
   railReserve: 0,
+  topChrome: null,
   source: "fallback",
 };
 
@@ -133,6 +249,7 @@ export function getFoldSignals(): FoldSignals {
   if (!native?.isSupported?.()) return NO_FOLD;
 
   const regions = native.getReservedRegions().map(toRegion);
+  const window = native.getWindowSize();
   const fold = regions.find((region) => region.kind === "division") ?? null;
   const railReserve = regions
     .filter((region) => region.kind === "occlusion" && startsAtTop(region))
@@ -146,7 +263,6 @@ export function getFoldSignals(): FoldSignals {
 
   let halves: FoldSignals["halves"] = null;
   if (fold && foldAxis) {
-    const window = native.getWindowSize();
     halves =
       foldAxis === "book"
         ? {
@@ -159,7 +275,16 @@ export function getFoldSignals(): FoldSignals {
           };
   }
 
-  return { regions, hasFold: fold !== null, fold, foldAxis, halves, railReserve, source: "native" };
+  return {
+    regions,
+    hasFold: fold !== null,
+    fold,
+    foldAxis,
+    halves,
+    railReserve,
+    topChrome: topChromeOf(regions, window.width),
+    source: "native",
+  };
 }
 
 /**
