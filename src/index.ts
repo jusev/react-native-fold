@@ -310,9 +310,6 @@ export function getFoldSignals(): FoldSignals {
   const regions = native.getReservedRegions().map(toRegion);
   const window = native.getWindowSize();
   const fold = regions.find((region) => region.kind === "division") ?? null;
-  const railReserve = regions
-    .filter((region) => region.kind === "occlusion" && startsAtTop(region))
-    .reduce((deepest, region) => Math.max(deepest, region.y + region.height), 0);
 
   // A fold taller than it is wide runs down the display and divides left
   // from right; a wider one runs across and divides top from bottom. Read
@@ -345,12 +342,34 @@ export function getFoldSignals(): FoldSignals {
   // other. Not `left !== right`: a rounding difference between edges is not
   // a rail, and treating it as one makes the answer flap between frames.
   const RAIL_MIN_INSET = 24;
-  const reserved: FoldSignals["chromeSide"] =
+  const reservedSide: FoldSignals["chromeSide"] =
     window.insetRight >= RAIL_MIN_INSET && window.insetRight > window.insetLeft
       ? "right"
       : window.insetLeft >= RAIL_MIN_INSET && window.insetLeft > window.insetRight
         ? "left"
         : null;
+
+  // The reserved strip wins where there is one, because that is a column the
+  // system has already committed to; the outer edge of a shared display
+  // otherwise.
+  const chromeSide = reservedSide ?? outerSide;
+
+  // How far down THE CHROME'S OWN COLUMN the system reaches.
+  //
+  // Scoped to that side deliberately. A reserved region at the top of the
+  // opposite edge says nothing about the column a rail is going in, and
+  // counting it pushes an app's first button down the screen to clear
+  // something that is not above it. Zero when no side carries chrome, and
+  // zero on the outer edge of a shared display — where the system reserved
+  // nothing, so there is nothing to clear.
+  const onChromeSide = (region: ReservedRegion) =>
+    chromeSide === "right" ? region.x + region.width >= window.width - FLUSH : region.x <= FLUSH;
+  const railReserve =
+    chromeSide === null
+      ? 0
+      : regions
+          .filter((region) => region.kind === "occlusion" && startsAtTop(region) && onChromeSide(region))
+          .reduce((deepest, region) => Math.max(deepest, region.y + region.height), 0);
 
   return {
     regions,
@@ -361,7 +380,7 @@ export function getFoldSignals(): FoldSignals {
     railReserve,
     topChrome: topChromeOf(regions, window.width),
     outerSide,
-    chromeSide: reserved ?? outerSide,
+    chromeSide,
     source: "native",
   };
 }
