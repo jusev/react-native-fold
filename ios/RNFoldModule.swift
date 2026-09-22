@@ -24,10 +24,20 @@ import UIKit
  */
 public class RNFoldModule: Module {
   private var observer: RNFoldObserverView?
-  // The last set sent, so layout passes that change nothing stay silent.
+  // The last state sent, so layout passes that change nothing stay silent.
   // layoutSubviews runs often; a re-render per pass would be a cost this
   // package imposed on every app using it.
-  private var lastSent: [[String: Any]]?
+  //
+  // It holds the WINDOW METRICS as well as the regions, because both decide
+  // what a caller sees. Comparing regions alone meant a window that moved
+  // across the display without its reserved regions changing — resized into
+  // or out of a shared display, where neither half reserves anything — sent
+  // nothing at all, and the app went on laying out for the side it used to
+  // be on.
+  private var lastSent: [String: Any]?
+  // Tokens for the scene notifications, kept so they can be removed when JS
+  // stops listening.
+  private var sceneTokens: [NSObjectProtocol] = []
 
   public func definition() -> ModuleDefinition {
     Name("RNFold")
@@ -37,11 +47,17 @@ public class RNFoldModule: Module {
     // The observer is installed while JS is listening and removed when it
     // stops, so an app that never asks pays nothing.
     OnStartObserving {
-      DispatchQueue.main.async { self.attachObserver() }
+      DispatchQueue.main.async {
+        self.attachObserver()
+        self.observeSceneChanges()
+      }
     }
 
     OnStopObserving {
-      DispatchQueue.main.async { self.detachObserver() }
+      DispatchQueue.main.async {
+        self.stopObservingSceneChanges()
+        self.detachObserver()
+      }
     }
 
     // Synchronous on purpose. Layout needs this on the first frame, and a
@@ -54,40 +70,7 @@ public class RNFoldModule: Module {
     // The window's size, so the JS side can express the halves a fold leaves
     // without having to reconcile two sources of truth for the same window.
     Function("getWindowSize") { () -> [String: Any] in
-      guard let window = RNFoldModule.keyWindow() else {
-        return ["width": 0, "height": 0, "x": 0, "y": 0, "screenWidth": 0, "screenHeight": 0]
-      }
-      let bounds = window.bounds
-      // Where this window sits ON THE DISPLAY.
-      //
-      // Not window.frame: a window sharing the display with another app is
-      // given its own coordinate space, so its frame origin is {0, 0}
-      // whichever half it occupies, and an app cannot tell which side of the
-      // screen it is on. Converting into the screen's coordinate space is
-      // what actually answers it.
-      //
-      // coordinateSpace, not fixedCoordinateSpace: the fixed one is locked to
-      // the device's portrait origin, so on a landscape display the offset
-      // comes back on the other axis and a left/right question gets a
-      // top/bottom answer.
-      let screen = window.windowScene?.screen ?? window.screen
-      let onScreen = window.convert(bounds, to: screen.coordinateSpace)
-      // The insets come along too, so the package can answer "which edge does
-      // my chrome go on" by itself rather than asking the app to combine two
-      // facts it should not have to know are related.
-      let safeArea = window.safeAreaInsets
-      return [
-        "width": bounds.width,
-        "height": bounds.height,
-        "x": onScreen.origin.x,
-        "y": onScreen.origin.y,
-        "screenWidth": screen.bounds.width,
-        "screenHeight": screen.bounds.height,
-        "insetTop": safeArea.top,
-        "insetRight": safeArea.right,
-        "insetBottom": safeArea.bottom,
-        "insetLeft": safeArea.left,
-      ]
+      RNFoldModule.windowMetrics()
     }
 
     // Whether the running OS can answer at all. Callers fall back to their
@@ -116,11 +99,83 @@ public class RNFoldModule: Module {
     lastSent = nil
   }
 
+  // A window can be handed to a different UIWindow when the app is resized
+  // into or out of a shared display, and the observer view goes with the old
+  // one — still laid out, still reporting, about a window nobody is looking
+  // at. layoutSubviews cannot catch that, because the view it belongs to is
+  // no longer in the window that matters. These notifications can.
+  private func observeSceneChanges() {
+    guard sceneTokens.isEmpty else { return }
+    let center = NotificationCenter.default
+    for name in [UIScene.didActivateNotification, UIApplication.didBecomeActiveNotification] {
+      sceneTokens.append(
+        center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+          self?.reattachIfNeeded()
+        }
+      )
+    }
+  }
+
+  private func stopObservingSceneChanges() {
+    sceneTokens.forEach(NotificationCenter.default.removeObserver)
+    sceneTokens.removeAll()
+  }
+
+  private func reattachIfNeeded() {
+    guard observer != nil else { return }
+    if observer?.window !== RNFoldModule.keyWindow() {
+      // detachObserver clears lastSent, so the move is always followed by a
+      // fresh report rather than being deduped against the old window's.
+      detachObserver()
+      attachObserver()
+    } else {
+      emitIfChanged()
+    }
+  }
+
   private func emitIfChanged() {
     let regions = RNFoldModule.reservedRegions()
-    if let previous = lastSent, NSArray(array: previous).isEqual(to: regions) { return }
-    lastSent = regions
+    let state: [String: Any] = ["regions": regions, "window": RNFoldModule.windowMetrics()]
+    if let previous = lastSent, NSDictionary(dictionary: previous).isEqual(to: state) { return }
+    lastSent = state
     sendEvent("onReservedRegionsChange", ["regions": regions])
+  }
+
+  // The window's size, where it sits ON THE DISPLAY, and what it has
+  // reserved — everything about the window itself that a layout depends on.
+  private static func windowMetrics() -> [String: Any] {
+    guard let window = keyWindow() else {
+      return [
+        "width": 0, "height": 0, "x": 0, "y": 0, "screenWidth": 0, "screenHeight": 0,
+        "insetTop": 0, "insetRight": 0, "insetBottom": 0, "insetLeft": 0,
+      ]
+    }
+    let bounds = window.bounds
+    // Not window.frame: a window sharing the display with another app is
+    // given its own coordinate space, so its frame origin is {0, 0}
+    // whichever half it occupies, and an app cannot tell which side of the
+    // screen it is on. Converting into the screen's coordinate space is what
+    // actually answers it.
+    //
+    // coordinateSpace, not fixedCoordinateSpace: the fixed one is locked to
+    // the device's portrait origin, so on a landscape display the offset
+    // comes back on the other axis and a left/right question gets a
+    // top/bottom answer.
+    let screen = window.windowScene?.screen ?? window.screen
+    let onScreen = window.convert(bounds, to: screen.coordinateSpace)
+    let safeArea = window.safeAreaInsets
+    return [
+      "width": bounds.width,
+      "height": bounds.height,
+      "x": onScreen.origin.x,
+      "y": onScreen.origin.y,
+      "screenWidth": screen.bounds.width,
+      "screenHeight": screen.bounds.height,
+      "insetTop": safeArea.top,
+      "insetRight": safeArea.right,
+      "insetBottom": safeArea.bottom,
+      "insetLeft": safeArea.left,
+    ]
   }
 
   private static func keyWindow() -> UIWindow? {
