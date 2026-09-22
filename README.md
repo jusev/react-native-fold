@@ -203,7 +203,36 @@ type FoldSignals = {
 | `outerSide` | `"left" \| "right" \| null` | which display edge this window is flush against, when it is against one and not the other. `null` when the window fills the display. |
 | `chromeSide` | `"left" \| "right" \| null` | **which edge your toolbar belongs on.** `null` means across the top, the way a phone has always done it. |
 | `insets` | `{ top, right, bottom, left }` | the window's safe-area insets, read in the same layout pass as everything else. The same numbers `react-native-safe-area-context` gives you; they do not disagree. |
-| `source` | `"native" \| "fallback"` | `"native"` when the OS answered; `"fallback"` when it could not. |
+| `source` | `"native" \| "fallback"` | whether these numbers came from the OS at all. See [below](#source-tells-a-real-zero-from-an-unanswered-question) — most apps never read it. |
+
+#### `source` tells a real zero from an unanswered question
+
+Two quite different situations produce **identical-looking data**, and `source` is the only thing that separates them.
+
+Take `railReserve: 0`:
+
+- with `source: "native"`, the package asked iOS and iOS said *nothing is reserved at the head of that column*. Zero is the truth. Do not pad.
+- with `source: "fallback"`, the package could not ask anyone. Zero is a placeholder.
+
+Same for `fold: null` — "the device is flat right now" versus "I have no idea whether it is folded". You cannot tell those apart from the value.
+
+| `source` | when |
+|---|---|
+| `"native"` | iOS 27.1+, a development build, pods installed — the module loaded and the OS answered |
+| `"fallback"` | iOS below 27.1 · Android · web · Expo Go · a missing `pod install` · Jest |
+
+Under `"fallback"` every field is the flat default: no fold, no regions, no chrome side, all zeros. That is deliberate — your foldable branches take their null path and the app behaves exactly as it did before you installed anything.
+
+**Most apps never read it.** You need it in one case: when you keep a constant of your own as a last resort, and want it applied *only* where the system stayed silent.
+
+```tsx
+const { railReserve, source } = useFoldSignals();
+const reserve = source === "native" ? railReserve : MY_ESTIMATE;
+```
+
+The test is `source === "native"` — **not** `railReserve > 0`. Getting that wrong is [mistake 2](#five-mistakes-this-package-exists-to-prevent): an edge where iOS truthfully said *nothing is reserved here* gets a constant measured for a different edge, and the first button on the rail ends up a third of the way down a column with nothing above it.
+
+The other use is diagnostic. If everything is `null` on a device you know folds, `source` tells you immediately whether that is a layout problem or just the module not loading.
 
 #### `chromeSide` is the one to read
 
@@ -552,7 +581,7 @@ Every one of these was a real bug, found on a real device.
 
 1. **Hard-coding the rail reserve.** The distance from the top of the screen to the bottom of the status glyphs differs between the two displays of a single handset. A constant tuned on one is wrong on the other. → `railReserve`.
 
-2. **Treating a reported zero as a missing answer.** `railReserve === 0` means *the system reserved nothing there* — exactly right on the outer edge of a shared display. Falling back to your own constant when you see `0` substitutes a number measured for a different edge entirely. Branch on `source`, never on the value.
+2. **Treating a reported zero as a missing answer.** `railReserve === 0` means *the system reserved nothing there* — exactly right on the outer edge of a shared display. Falling back to your own constant when you see `0` substitutes a number measured for a different edge entirely. Branch on [`source`](#source-tells-a-real-zero-from-an-unanswered-question), never on the value.
 
 3. **Centring a row in the reservation.** The region is a box the system claimed, not the layout inside it. Its top falls under the display's corner curve, so the glyphs sit low in it, and a row centred in the box rides visibly above the clock. → `topChrome.top` / `.height`.
 
