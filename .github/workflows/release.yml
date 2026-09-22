@@ -1,0 +1,57 @@
+name: Release
+
+# Publishing happens here and nowhere else.
+#
+# npm provenance links a published tarball to the exact commit and workflow
+# run that built it, and npm shows that as a verified badge. It can only be
+# produced by a CI run with an OIDC token — a laptop cannot mint one — so a
+# release published by hand is a release nobody can verify. That is the whole
+# reason this file exists rather than someone typing `npm publish`.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for provenance. Without it `--provenance` fails outright
+      # rather than quietly publishing an unattested tarball.
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      # No lockfile is committed: this package has no runtime dependencies,
+      # and its devDependencies are only a test runner. `npm ci` would fail
+      # on the missing lockfile.
+      - run: npm install
+
+      - name: Test
+        run: npm test
+
+      - name: Check the tag matches package.json
+        # A tag that disagrees with the version publishes something nobody
+        # asked for, under a number nobody can take back.
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $PKG" >&2
+            exit 1
+          fi
+
+      - name: Show exactly what will be published
+        run: npm pack --dry-run
+
+      - name: Publish
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

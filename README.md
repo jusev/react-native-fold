@@ -2,7 +2,13 @@
 
 **Foldable and shared-display layout signals for React Native — measured, not guessed.**
 
+**Supports iPhone Duo**, and every foldable that reports itself the same way. Built against iOS 27.1's reserved regions on real hardware, not a spec sheet.
+
 One hook tells your app what shape it is being asked to draw into: where the fold falls, which half is which, how far down a side rail the system's own glyphs reach, and which edge your toolbar belongs on. Every number comes from the OS. There is no device list, no model check, no `isDuo`.
+
+Built for [yTranslate](https://ytranslate.app), and extended for everyone — every number here came from a real layout bug in a shipping app, not from reading the docs.
+
+> **Why no `isDuo`, in a package that supports iPhone Duo?** Because a model name cannot answer the questions a layout asks. The reserve above a rail differs *between the two displays of the same handset*, and a flag naming one device is wrong the day the next one ships. Supporting a device well and detecting it are different things — see [No device detection](#no-device-detection).
 
 ```tsx
 import { useFoldSignals } from "@jusev/react-native-fold";
@@ -608,7 +614,7 @@ The package converts the window into the screen's coordinate space, which is the
 
 ## Five mistakes this package exists to prevent
 
-Every one of these was a real bug, found on a real device.
+Every one of these was a real bug, found on a real device, while making [yTranslate](https://ytranslate.app) work on iPhone Duo. They are here so nobody has to find them twice.
 
 1. **Hard-coding the rail reserve.** The distance from the top of the screen to the bottom of the status glyphs differs between the two displays of a single handset. A constant tuned on one is wrong on the other. → `railReserve`.
 
@@ -850,3 +856,5 @@ Not unless you wrote `showInProduction`. Left mounted, it renders `null` in a re
 ## Status
 
 Early: `0.1.0`, iOS only, API still moving. MIT.
+
+Written for [yTranslate](https://ytranslate.app) — live translation for conversations — and extended into a general package because none of this is specific to that app. If it saves you the four screenshot-measured constants it cost us, it has done its job.

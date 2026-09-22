@@ -7,7 +7,7 @@ Pod::Spec.new do |s|
   s.version        = package['version']
   s.summary        = package['description']
   s.license        = package['license']
-  s.author         = 'ajusev'
+  s.author         = 'Aleksei Jusev'
   s.homepage       = 'https://github.com/jusev/react-native-fold'
   s.platforms      = { :ios => '16.4' }
   s.swift_version  = '5.9'
