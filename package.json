@@ -1,0 +1,15 @@
+{
+  "name": "@jusev/react-native-fold",
+  "version": "0.1.0",
+  "description": "Foldable layout signals for React Native: the regions the system has reserved, and the shape they leave you.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "license": "MIT",
+  "private": true,
+  "keywords": ["react-native", "foldable", "safe-area", "layout"],
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}
