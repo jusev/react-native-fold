@@ -804,9 +804,21 @@ Note the shape of that test: `source === "native"` alone — **not** `railReserv
 |---|---|
 | **iOS 27.1+** | implemented — `reservedRegions`, an observer inside UIKit's layout pass, scene-change recovery, and shared-display placement |
 | **iOS 16.4 – 27.0** | builds and runs; returns the fallback shape with `source: "fallback"` |
-| **Android** | not yet. A hinge is invisible to Android's safe-area API too, and the same argument applies there; Jetpack WindowManager's `FoldingFeature` is the route, behind this same API. |
+| **Android** | not yet — **and safe to ship anyway**, see below |
 | **Web / JS-only** | fallback |
 | **Expo Go** | unsupported — use a development build |
+
+### Will it crash on Android?
+
+No. Installing this in an app that also ships to Android changes nothing about the Android build or the Android app.
+
+- **Nothing is linked.** `expo-module.config.json` declares `"platforms": ["apple"]`, so Expo autolinking skips Android entirely, and there is no `android/` directory, no `build.gradle` and no `react-native.config.js`, so the React Native CLI does not see it either. Gradle has nothing to compile.
+- **Nothing is required at runtime.** The module is loaded with `requireOptionalNativeModule`, which returns `null` rather than throwing when the native side is absent, and every read is guarded — `native?.isSupported?.()`, `native?.addListener`.
+- **Every field is inert**, `source` is `"fallback"`, and your null checks all take the path they take on a flat phone. Which is to say: Android renders exactly as it did before you installed anything.
+
+This is covered by a test — `src/__tests__/fallback.test.ts` mocks the native module absent and asserts that nothing throws and every field is inert — because a crash here would not be a degraded experience, it would be an app that will not start on a platform this package does not even claim to cover.
+
+When Android support does land, it will be Jetpack WindowManager's `FoldingFeature` behind this same API: a hinge is invisible to Android's safe-area API too, so the same argument applies there.
 
 ---
 

@@ -6,10 +6,31 @@
   "types": "src/index.ts",
   "license": "MIT",
   "private": true,
-  "keywords": ["react-native", "foldable", "safe-area", "layout"],
+  "keywords": [
+    "react-native",
+    "foldable",
+    "safe-area",
+    "layout"
+  ],
   "peerDependencies": {
     "expo": "*",
     "react": "*",
     "react-native": "*"
+  },
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.12",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.2",
+    "typescript": "^5.4.0"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "testMatch": [
+      "<rootDir>/src/**/__tests__/**/*.test.ts"
+    ]
   }
 }
