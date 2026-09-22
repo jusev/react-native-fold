@@ -110,13 +110,41 @@ export function useFoldSignals(): FoldSignals {
   const [signals, setSignals] = useState<FoldSignals>(() => getFoldSignals());
 
   useEffect(() => {
-    let subscription: EmitterSubscription | undefined;
-    const refresh = () => setSignals(getFoldSignals());
-    subscription = Dimensions.addEventListener("change", refresh);
-    // Once on mount as well: the first read can happen before the window has
-    // its final size, and nothing emits for that.
-    refresh();
-    return () => subscription?.remove();
+    let cancelled = false;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    // UIKit posts no notification when reserved regions change — it expects
+    // a view to re-query them during layout. From JS the nearest signal is a
+    // window resize, and that arrives BEFORE the window has finished moving
+    // to the other display: a single read at that moment returns the regions
+    // of the display being left, which is how a fold ends up with the other
+    // panel's reserve and the app draws under the status glyphs.
+    //
+    // So the change starts a short sequence of reads rather than one, and
+    // each replaces the last. It converges on the settled value within a few
+    // hundred milliseconds, and reads nothing at all while the device is
+    // still.
+    //
+    // This is a stopgap and should be said plainly: the correct fix is a
+    // native view that re-queries in layoutSubviews and emits, which removes
+    // the guesswork about when to look. Until this package has one, a fold is
+    // the only moment it can be wrong, and only briefly.
+    const refresh = () => {
+      if (!cancelled) setSignals(getFoldSignals());
+    };
+    const refreshSoon = () => {
+      refresh();
+      for (const delay of [16, 120, 350]) timers.push(setTimeout(refresh, delay));
+    };
+
+    const subscription = Dimensions.addEventListener("change", refreshSoon);
+    refreshSoon();
+
+    return () => {
+      cancelled = true;
+      for (const timer of timers) clearTimeout(timer);
+      subscription.remove();
+    };
   }, []);
 
   return useMemo(() => signals, [signals]);
