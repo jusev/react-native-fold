@@ -17,6 +17,7 @@ const { chromeSide, foldAxis, halves, topChrome, railReserve } = useFoldSignals(
 - [Why this exists](#why-this-exists)
 - [Install](#install)
 - [Quick start](#quick-start)
+- [You never check for "normal"](#you-never-check-for-normal)
 - [How it works](#how-it-works)
 - [API reference](#api-reference)
   - [`useFoldSignals()`](#usefoldsignals)
@@ -125,6 +126,36 @@ export default function Screen() {
 ```
 
 Every signal is inert on a flat device, so each branch is a null check that falls through to what you already have. **A foldable branch cannot regress a phone.**
+
+---
+
+## You never check for "normal"
+
+This is the most important thing about using the package, so it is worth stating on its own.
+
+**There is no mode to be in, and no flag that says "this is an ordinary phone".** Every signal is already `null` or `0` when there is nothing unusual, so you do not write a normal branch and a foldable branch. You write your normal UI, and the special cases hang off it as null checks:
+
+```tsx
+// Your toolbar. On a phone chromeSide is null and this is your top bar,
+// exactly as it was before you installed anything.
+{chromeSide ? <Rail side={chromeSide} /> : <TopBar />}
+
+// Your content. On a phone fold is null, so this styles nothing.
+<ScrollView style={fold ? avoidFold(fold) : null}>
+```
+
+A phone, an iPad, a flat foldable, and a foldable in a pose you have not written a case for all arrive at the same place: the code you already had.
+
+That is what makes the guarantee in the quick start true. **A foldable branch cannot regress a phone, because on a phone the branch does not exist.**
+
+If you genuinely want to ask the question — to skip an expensive branch, say — it is one line:
+
+```tsx
+const { hasFold, chromeSide } = useFoldSignals();
+const nothingUnusual = !hasFold && chromeSide === null;
+```
+
+It is deliberately not a field. A boolean called `isNormal` invites `if (isNormal) { ...one layout... } else { ...another... }`, and two code paths for one screen drift apart — with the second only ever exercised by whoever owns the hardware. Separate, inert signals keep it as one layout with a few places where a number comes from the system instead of from you.
 
 ---
 
