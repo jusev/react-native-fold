@@ -29,6 +29,7 @@ const { chromeSide, foldAxis, halves, topChrome, railReserve } = useFoldSignals(
 - [Recipes](#recipes)
 - [Five mistakes this package exists to prevent](#five-mistakes-this-package-exists-to-prevent)
 - [Debugging](#debugging)
+- [Contributing, and monorepos](#contributing-and-monorepos)
 - [Testing](#testing)
 - [No device detection](#no-device-detection)
 - [Fallback is part of the contract](#fallback-is-part-of-the-contract)
@@ -86,35 +87,6 @@ npx pod-install              # or: cd ios && pod install
 ```
 
 Autolinking picks the module up from `expo-module.config.json`. There is nothing to register, no native code to write, and no change to `AppDelegate`.
-
-### Developing the package alongside an app
-
-If you install it by path — `"@jusev/react-native-fold": "file:../react-native-fold"` — `node_modules` holds a symlink pointing outside the project, and **Metro will not follow it**. It fails as:
-
-```
-Unable to resolve module @jusev/react-native-fold
-```
-
-which reads like a typo and is not. Add the real directory to `metro.config.js`:
-
-```js
-const path = require('path');
-const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
-
-const foldPackage = path.resolve(__dirname, '../react-native-fold');
-
-module.exports = mergeConfig(getDefaultConfig(__dirname), {
-  // Brings the real directory into the tree Metro serves and watches, so
-  // edits to the package hot-reload like any other source file.
-  watchFolders: [foldPackage],
-  resolver: {
-    // Keeps the package's own react / react-native / expo-modules-core
-    // imports resolving to the app's single copy. Without this you get two
-    // Reacts, and hooks that fail at runtime for no visible reason.
-    nodeModulesPaths: [path.resolve(__dirname, 'node_modules')],
-  },
-});
-```
 
 ---
 
@@ -655,6 +627,47 @@ xcrun simctl spawn booted log stream --style compact \
 - `railReserve` is `0` on the outer edge of a shared display. Nothing is reserved there.
 - `fold` is `null` when a foldable is **flat**. Reserved regions are inactive and zero-width when the device is fully open, which is correct: there is no crease to avoid.
 - `margins` are all `0` on iOS 27.1. That is why `topChrome.estimated` is `true`.
+
+---
+
+## Contributing, and monorepos
+
+Nothing here applies if you installed from npm — `npm install` copies real files into `node_modules` and Metro resolves them normally. This is for working **on** the package, or consuming it from a monorepo.
+
+Install it by path:
+
+```json
+"@jusev/react-native-fold": "file:../react-native-fold"
+```
+
+npm makes that a symlink, and the app then fails to build with:
+
+```
+Unable to resolve module @jusev/react-native-fold
+```
+
+which reads like a typo and is not. **Metro follows the symlink** — it has resolved symlinks unconditionally since 0.80, and there is no flag to set. What it will not do is serve a file whose real path lies outside `projectRoot`, and the real path here is a sibling directory. `watchFolders` is the list of extra directories Metro will serve and watch:
+
+```js
+const path = require('path');
+const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
+
+const foldPackage = path.resolve(__dirname, '../react-native-fold');
+
+module.exports = mergeConfig(getDefaultConfig(__dirname), {
+  // Brings the real directory into the tree Metro serves, so it resolves at
+  // all — and watches, so edits hot-reload like any other source file.
+  watchFolders: [foldPackage],
+  resolver: {
+    // Keeps the package's own react / react-native / expo-modules-core
+    // imports resolving to the app's single copy. Without this you can get
+    // two Reacts, and hooks that fail at runtime for no visible reason.
+    nodeModulesPaths: [path.resolve(__dirname, 'node_modules')],
+  },
+});
+```
+
+The same applies to any monorepo where the package resolves outside the app's own root.
 
 ---
 
