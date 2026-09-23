@@ -16,13 +16,20 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # write, not read, so the run can turn the tag into a GitHub Release.
+      # Nothing else here needs it, and it is the only reason this is not
+      # read-only.
+      contents: write
       # Required for provenance. Without it `--provenance` fails outright
       # rather than quietly publishing an unattested tarball.
       id-token: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The release notes are the tag's own annotation, and a shallow
+          # clone does not always carry the tag object's message.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -51,7 +58,49 @@ jobs:
       - name: Show exactly what will be published
         run: npm pack --dry-run
 
+      # Skips a version already on npm rather than failing on it, so a run
+      # that died after publishing — a network blip creating the release,
+      # say — can simply be re-run instead of needing a throwaway version.
       - name: Publish
-        run: npm publish --provenance --access public
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "@jusev/react-native-fold@$VERSION" version >/dev/null 2>&1; then
+            echo "@jusev/react-native-fold@$VERSION is already on npm; skipping publish."
+          else
+            npm publish --provenance --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # After publishing, never before: a release announcing a version that
+      # is not on npm is worse than no release at all.
+      #
+      # Uses the gh CLI, which is already on the runner, rather than a
+      # third-party action. This workflow exists to produce an attested
+      # tarball, and adding someone else's code to the job that mints it
+      # would undercut the point of the attestation.
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # The tag's annotation is the release notes. They are written
+          # deliberately at tag time, which is better than notes generated
+          # from commit subjects.
+          NOTES="$(git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME")"
+          if [ -z "$NOTES" ]; then
+            NOTES="$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")"
+          fi
+          VERSION="${GITHUB_REF_NAME#v}"
+          printf '%s\n\n---\n\nOn npm: https://www.npmjs.com/package/@jusev/react-native-fold/v/%s\n' \
+            "$NOTES" "$VERSION" > /tmp/notes.md
+          # Idempotent for the same reason as the publish above.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; leaving it alone."
+          else
+            # --verify-tag refuses to invent a release for a tag that is not
+            # actually on the remote.
+            gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes-file /tmp/notes.md \
+              --verify-tag
+          fi
