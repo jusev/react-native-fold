@@ -2,13 +2,9 @@
 
 **Foldable and shared-display layout signals for React Native — measured, not guessed.**
 
-**Supports iPhone Duo and Android foldables.** Built against iOS 27.1's reserved regions and Jetpack WindowManager, and driven on both — an iPhone Duo simulator and a Pixel 9 Pro Fold emulator — rather than written from a spec sheet. Not yet exercised on physical hardware.
+Supports iPhone Duo and Android foldables, via iOS 27.1 reserved regions and Jetpack WindowManager.
 
-One hook tells your app what shape it is being asked to draw into: where the fold falls, which half is which, how far down a side rail the system's own glyphs reach, and which edge your toolbar belongs on. Every number comes from the OS. There is no device list, no model check, no `isDuo`.
-
-Built for [yTranslate](https://ytranslate.app), and extended for everyone — every number here came from a real layout bug in a shipping app, not from reading the docs.
-
-> **Why no `isDuo`, in a package that supports iPhone Duo?** Because a model name cannot answer the questions a layout asks. The reserve above a rail differs *between the two displays of the same handset*, and a flag naming one device is wrong the day the next one ships. Supporting a device well and detecting it are different things — see [No device detection](#no-device-detection).
+One hook reports where the fold falls, which half is which, how far down a side column the system's glyphs reach, and which edge your toolbar belongs on. Every value comes from the OS. There is no device list, no model check, no `isDuo` — see [No device detection](#no-device-detection).
 
 ```tsx
 import { useFoldSignals } from "@jusev/react-native-fold";
@@ -34,7 +30,7 @@ const { chromeSide, foldAxis, halves, topChrome, railReserve } = useFoldSignals(
   - [`Rect`](#rect)
   - [`<FoldDebugOverlay />`](#folddebugoverlay-)
 - [Recipes](#recipes)
-- [Seven mistakes this package exists to prevent](#seven-mistakes-this-package-exists-to-prevent)
+- [Pitfalls](#pitfalls)
 - [Debugging](#debugging)
 - [Contributing, and monorepos](#contributing-and-monorepos)
 - [Testing](#testing)
@@ -42,6 +38,7 @@ const { chromeSide, foldAxis, halves, topChrome, railReserve } = useFoldSignals(
 - [Fallback is part of the contract](#fallback-is-part-of-the-contract)
 - [Platform support](#platform-support)
 - [FAQ](#faq)
+- [Status](#status)
 
 ---
 
@@ -55,14 +52,7 @@ React Native apps get one number per edge from the safe-area API: how wide the i
 
 **A split boundary reserves nothing.** An app on the left half of a display and an app on the right half see identical insets: `0` on both sides. And the system hands a shared-display window its *own coordinate space*, so `window.frame.origin` is `{0, 0}` whichever half you occupy. From inside the app, left and right are indistinguishable — yet your toolbar belongs on the outer edge, and that is a different edge in each case.
 
-The usual workaround is to measure a screenshot and hard-code the answer. We did exactly that, four times, and each number was wrong in a different way:
-
-- a toolbar at the top of the rail drew **underneath** the status glyphs
-- the system's controls are not centred in the reserved strip, so ours sat beside them
-- a reserve measured on the inner display ran into the glyphs on the **outer** display of the same handset
-- that same constant, reused on an edge the system had reserved *nothing* along, pushed the first button a third of the way down a column with nothing above it
-
-The third one is the point. **The distance differs between the two displays of a single device**, so no constant — and no device name — can be right for both.
+**A measured constant cannot substitute.** The depth of the system's glyphs in a side column differs between the two displays of a single handset, and between one handset and the next. A value read off a screenshot of one display is wrong on the other.
 
 ---
 
@@ -135,9 +125,7 @@ Every signal is inert on a flat device, so each branch is a null check that fall
 
 ## You never check for "normal"
 
-This is the most important thing about using the package, so it is worth stating on its own.
-
-**There is no mode to be in, and no flag that says "this is an ordinary phone".** Every signal is already `null` or `0` when there is nothing unusual, so you do not write a normal branch and a foldable branch. You write your normal UI, and the special cases hang off it as null checks:
+**There is no mode, and no flag meaning "ordinary phone".** Every signal is `null` or `0` when there is nothing unusual, so there is no normal branch to write. Write the UI you already have and hang the special cases off it as null checks:
 
 ```tsx
 // Your toolbar. On a phone chromeSide is null and this is your top bar,
@@ -148,18 +136,16 @@ This is the most important thing about using the package, so it is worth stating
 <ScrollView style={fold ? avoidFold(fold) : null}>
 ```
 
-A phone, an iPad, a flat foldable, and a foldable in a pose you have not written a case for all arrive at the same place: the code you already had.
+A phone, an iPad, a flat foldable, and a foldable in a pose you have not handled all reach the same code path: the one you already had. **A foldable branch cannot regress a phone, because on a phone the branch does not exist.**
 
-That is what makes the guarantee in the quick start true. **A foldable branch cannot regress a phone, because on a phone the branch does not exist.**
-
-If you genuinely want to ask the question — to skip an expensive branch, say — it is one line:
+To ask the question explicitly — to skip an expensive branch, say — it is one line:
 
 ```tsx
 const { hasFold, chromeSide } = useFoldSignals();
 const nothingUnusual = !hasFold && chromeSide === null;
 ```
 
-It is deliberately not a field. A boolean called `isNormal` invites `if (isNormal) { ...one layout... } else { ...another... }`, and two code paths for one screen drift apart — with the second only ever exercised by whoever owns the hardware. Separate, inert signals keep it as one layout with a few places where a number comes from the system instead of from you.
+It is not a field, deliberately. A single boolean invites two code paths for one screen, and the foldable path is only ever exercised by whoever owns the hardware.
 
 ---
 
@@ -181,7 +167,7 @@ In both kinds:
 
 Every value this package reports is in **points**, in the **window's own coordinate space** — which is what React Native lays out in, so you never convert anything.
 
-### The part you would otherwise get wrong
+### Change detection
 
 **UIKit posts no notification when reserved regions change.** It expects a view to re-query them *while it lays out*. From JavaScript the nearest available signal is a window resize — and that arrives **before** the window has finished moving to the other display of a foldable, so reading then returns the regions of the panel you are *leaving*, and the app lays out against the wrong panel until something else disturbs it.
 
@@ -191,9 +177,7 @@ So the package installs an inert, invisible, non-interactive view at the back of
 
 It also watches for scene activation, because **being resized into or out of a shared display can hand the app a different `UIWindow`**. The observer view goes with the old one: still laid out, still reporting, about a window nobody is looking at. `layoutSubviews` cannot catch that — the view it belongs to is no longer in the window that matters.
 
-And a change is only emitted when something a caller can see has actually changed: regions *and* window metrics. Comparing regions alone means a window that moves across the display without its regions changing — neither half of a split reserves anything — sends nothing at all, and your app goes on laying out for the side it used to be on.
-
-None of this is visible from JavaScript. That is the argument for the package.
+A change is emitted only when something a caller can see has changed: the regions **and** the window metrics. Regions alone are not enough — a window can move across the display without its regions changing, because neither half of a split reserves anything.
 
 ---
 
@@ -274,7 +258,7 @@ const { railReserve, source } = useFoldSignals();
 const reserve = source === "native" ? railReserve : MY_ESTIMATE;
 ```
 
-The test is `source === "native"` — **not** `railReserve > 0`. Getting that wrong is [mistake 2](#seven-mistakes-this-package-exists-to-prevent): an edge where iOS truthfully said *nothing is reserved here* gets a constant measured for a different edge, and the first button on the rail ends up a third of the way down a column with nothing above it.
+The test is `source === "native"` — **not** `railReserve > 0`. That distinction is a [pitfall](#pitfalls): an edge where iOS truthfully said *nothing is reserved here* gets a constant measured for a different edge, and the first button on the rail ends up a third of the way down a column with nothing above it.
 
 The other use is diagnostic. If everything is `null` on a device you know folds, `source` tells you immediately whether that is a layout problem or just the module not loading.
 
@@ -564,7 +548,7 @@ const columns =
 </View>
 ```
 
-> **Why not `flex: 1` on both?** Two flex children divide a container in half, and half of a container is only the crease when the container is **centred on it** — which it is not the moment either edge carries a rail, and a rail is exactly what a folded device puts there. Measured on a real device that was six points, which is enough to sit a button on the fold.
+> **Why not `flex: 1` on both?** Two flex children divide a container in half, and half of a container is the crease only when the container is **centred on it**. It is not, as soon as one edge carries a rail. The error is the difference between the two paddings — a handful of points, enough to place a control on the fold.
 
 > **A child must not subtract the fold twice.** Once a pane is placed by the fold, anything inside it that *also* pads for the fold pads by a whole half of the **window** inside a pane that is itself half a window — which leaves nothing. If a component can be used both as a whole screen and as a pane, give it a prop saying which, and skip the fold padding when it is a pane. A pane in the **far** half still owes its outer edge the usual safe-area inset, though: it is against that edge.
 
@@ -626,23 +610,21 @@ The package converts the window into the screen's coordinate space, which is the
 
 ---
 
-## Seven mistakes this package exists to prevent
+## Pitfalls
 
-Every one of these was a real bug, hit while making [yTranslate](https://ytranslate.app) work on iPhone Duo and on Android foldables. They are here so nobody has to find them twice.
+Each of these produces a layout that looks plausible and is wrong.
 
-1. **Hard-coding the rail reserve.** The distance from the top of the screen to the bottom of the status glyphs differs between the two displays of a single handset. A constant tuned on one is wrong on the other. → `railReserve`.
-
-2. **Treating a reported zero as a missing answer.** `railReserve === 0` means *the system reserved nothing there* — exactly right on the outer edge of a shared display. Falling back to your own constant when you see `0` substitutes a number measured for a different edge entirely. Branch on [`source`](#source-tells-a-real-zero-from-an-unanswered-question), never on the value.
-
-3. **Centring a row in the reservation.** The region is a box the system claimed, not the layout inside it. Its top falls under the display's corner curve, so the glyphs sit low in it, and a row centred in the box rides visibly above the clock. → `topChrome.top` / `.height`.
-
-4. **Dividing a container with `flex: 1` and calling it the fold.** Only true if the container is centred on the crease, which it is not as soon as one edge carries a rail. → `fold.x`, `fold.width`.
-
-5. **Reading the regions on a window resize.** The resize arrives *before* the window has moved to the other display, so you read the panel you are leaving. → the hook, which reports from inside the platform's own layout pass on both platforms.
-
-6. **Reading a side inset as a chrome column.** Rotate an Android phone and the punch-hole camera reserves 60-odd points on an edge. It is hardware to avoid, not a home for a toolbar, and an app that put its chrome wherever the larger inset was moved its entire toolbar into a vertical rail because of a camera hole. → `chromeSide`, which also weighs whether the system is painting across the top.
-
-7. **Recomputing only when the thing you asked about changes.** Both platforms report *what* changed rather than *that* something did, so a window that moves without its regions changing tells you nothing — and the app lays out for the display it used to be on. Closing a foldable onto its outer display left the inner display's crease drawn down a phone-sized screen. → the hook, which watches layout on both platforms, not just the fold.
+| Pitfall | Why it fails | Use instead |
+|---|---|---|
+| Hard-coding the side-column reserve | The depth differs between one device's two displays | `railReserve` |
+| Treating `railReserve: 0` as "no answer" | `0` means nothing is reserved there, which is correct on the outer edge of a shared display | branch on `source` |
+| Centring a row in the reservation | The reservation is a claimed box, not the layout inside it; the glyphs sit low in it | `topChrome.top` + `.height` |
+| Splitting a container with `flex: 1` | Half a container is the crease only if the container is centred on it | `fold.x`, `fold.width` |
+| Reading regions on a window resize | The resize arrives before the window has moved to the other display | the hook |
+| Reading a side inset as a chrome column | A rotated phone's camera cutout reserves an edge without chrome living there | `chromeSide` |
+| Recomputing only when the fold changes | A window can move without its regions changing | the hook |
+| Sizing a child of a fold column directly | Margins sit outside a width, so the child overruns the column | size the column, let the margin be the gap |
+| Padding for the fold inside a pane the fold already placed | The pane is half a window; subtracting half a window again leaves nothing | pad only at the outermost level |
 
 ---
 
@@ -832,7 +814,7 @@ Note the shape of that test: `source === "native"` alone — **not** `railReserv
 |---|---|
 | **iOS 27.1+** | implemented — `reservedRegions`, an observer inside UIKit's layout pass, scene-change recovery, and shared-display placement |
 | **iOS 16.4 – 27.0** | builds and runs; returns the fallback shape with `source: "fallback"` |
-| **Android** | Jetpack WindowManager — folds and cutouts. Verified on a foldable emulator; see [Android](#android) |
+| **Android** | 7.0+ — Jetpack WindowManager; see [Android](#android) |
 | **Web / JS-only** | fallback |
 | **Expo Go** | unsupported — use a development build |
 
@@ -882,8 +864,6 @@ The package will not invent that number for you. Apple's guidance is still not t
 
 `outerSide` works here too, and more directly than on iOS: `WindowMetricsCalculator` gives both the current window and the whole display, and the offset between them says which side of the display a split-screen app is on. `chromeSide` still resolves to `null` while Android is painting a status bar across the top, because that is where its chrome lives — read `outerSide` if you want the placement itself.
 
-> **Verified on a Pixel 9 Pro Fold emulator** (Android 15), driving a real app with no app-side changes: flat reports no division, half-opened reports one at the centre with `foldAxis: "book"`, rotating turns that into `"tabletop"`, folding onto the outer display drops it and re-measures for the smaller screen, and reopening brings it back. Not yet run on physical hardware.
-
 ### Will it crash on Android?
 
 No — and that was true before Android support existed, because the module is optional by construction:
@@ -900,9 +880,6 @@ This is covered by a test — `src/__tests__/fallback.test.ts` mocks the native 
 ---
 
 ## FAQ
-
-**Is Android tested?**
-It has been run on a Pixel 9 Pro Fold emulator, folding and unfolding a real app, and the signals behave as documented. Not yet on physical hardware. Reports welcome.
 
 **Does this work on iPad?**
 Yes, in the sense that it does no harm: an iPad reports no division, so `foldAxis` is `null` and every fold branch falls through. `chromeSide` and `outerSide` work in Split View on iOS 27.1+.
@@ -929,6 +906,6 @@ Not unless you wrote `showInProduction`. Left mounted, it renders `null` in a re
 
 ## Status
 
-Early, and the API is still moving. iOS 27.1+ and Android, MIT licensed. The version is whatever npm says — deliberately not repeated here, because the last one was wrong the moment it shipped.
+The API is still moving ahead of 1.0. iOS 27.1+ and Android. MIT.
 
-Written for [yTranslate](https://ytranslate.app) — live translation for conversations — and extended into a general package because none of this is specific to that app. If it saves you the four screenshot-measured constants it cost us, it has done its job.
+Written for [yTranslate](https://ytranslate.app).
