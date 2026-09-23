@@ -272,6 +272,21 @@ function topChromeOf(regions: ReservedRegion[], windowWidth: number): TopChrome 
   if (top.length === 0) return null;
 
   const FLUSH = 1;
+
+  // Chrome that spans the whole top edge leaves no strip beside it, however
+  // many separate pieces it is reported in.
+  //
+  // This is what an Android status bar is: a full-width band the system
+  // draws in, usually alongside a camera cutout tucked into one corner of
+  // it. Looking only at the cutout finds a corner-anchored occlusion and
+  // concludes the rest of the row is free — and a bar placed there draws
+  // underneath the clock, because the row is not free at all. iOS reaches
+  // the same answer honestly: a centred Dynamic Island is flush to neither
+  // side and fails the test below.
+  if (top.some((region) => region.x <= FLUSH && region.x + region.width >= windowWidth - FLUSH)) {
+    return null;
+  }
+
   const leftFlush = top.every((region) => region.x <= FLUSH);
   const rightFlush = top.every((region) => region.x + region.width >= windowWidth - FLUSH);
   // Centred chrome fails both — the ordinary phone, and meant to fail.
@@ -350,6 +365,19 @@ export function getFoldSignals(): FoldSignals {
   const againstRight = window.x + window.width >= window.screenWidth - FLUSH;
   const outerSide: FoldSignals["outerSide"] = againstLeft === againstRight ? null : againstLeft ? "left" : "right";
 
+  // Whether the system paints a band across the WHOLE top edge.
+  //
+  // This is the single fact that says chrome lives on top rather than down a
+  // side, and three answers depend on it. An Android status bar is one; a
+  // corner-anchored piece of foldable chrome is not.
+  const topBand = regions.some(
+    (region) =>
+      region.kind === "occlusion" &&
+      startsAtTop(region) &&
+      region.x <= FLUSH &&
+      region.x + region.width >= window.width - FLUSH
+  );
+
   // A side "carries chrome" only when it is meaningfully wider than the
   // other. Not `left !== right`: a rounding difference between edges is not
   // a rail, and treating it as one makes the answer flap between frames.
@@ -364,7 +392,15 @@ export function getFoldSignals(): FoldSignals {
   // The reserved strip wins where there is one, because that is a column the
   // system has already committed to; the outer edge of a shared display
   // otherwise.
-  const chromeSide = reservedSide ?? outerSide;
+  //
+  // Unless the system is painting across the top, in which case neither is
+  // a chrome column and the answer is "across the top, as usual". A side
+  // inset alone cannot tell a column from a CUTOUT: turn an Android phone
+  // on its side and the punch-hole camera lands on an edge and reserves
+  // 62pt there, which is hardware to avoid and not a home for a toolbar.
+  // Read on its own it moved the entire app's chrome into a vertical rail
+  // because of a camera hole.
+  const chromeSide = topBand ? null : reservedSide ?? outerSide;
 
   // How far down THE CHROME'S OWN COLUMN the system reaches.
   //

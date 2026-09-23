@@ -1,0 +1,27 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.jusev.rnfold'
+version = '0.1.0'
+
+android {
+  namespace 'expo.modules.rnfold'
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}
+
+dependencies {
+  // Jetpack WindowManager. A hinge is invisible to Android's inset API just
+  // as it is to iOS's, and this is the only thing that reports one.
+  //
+  // window-java is the callback adapter: the library's own API is a
+  // coroutine Flow, and using it directly would put kotlinx-coroutines into
+  // the dependency graph of every app that installs this package. The
+  // adapter is the supported way to avoid that.
+  implementation 'androidx.window:window:1.3.0'
+  implementation 'androidx.window:window-java:1.3.0'
+}

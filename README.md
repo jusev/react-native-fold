@@ -34,7 +34,7 @@ const { chromeSide, foldAxis, halves, topChrome, railReserve } = useFoldSignals(
   - [`Rect`](#rect)
   - [`<FoldDebugOverlay />`](#folddebugoverlay-)
 - [Recipes](#recipes)
-- [Five mistakes this package exists to prevent](#five-mistakes-this-package-exists-to-prevent)
+- [Seven mistakes this package exists to prevent](#seven-mistakes-this-package-exists-to-prevent)
 - [Debugging](#debugging)
 - [Contributing, and monorepos](#contributing-and-monorepos)
 - [Testing](#testing)
@@ -73,6 +73,7 @@ The third one is the point. **The distance differs between the two displays of a
 | | |
 |---|---|
 | React Native | 0.76+ (New Architecture) |
+| Android | 7.0+ (API 24). Adds `androidx.window` 1.3 |
 | `expo-modules-core` | required — this is an Expo module, and works in a bare RN app via [`install-expo-modules`](https://docs.expo.dev/bare/installing-expo-modules/) |
 | iOS | builds on 16.4+; **reports regions on 27.1+**, falls back cleanly below |
 | Expo Go | not supported — use a [development build](https://docs.expo.dev/develop/development-builds/introduction/) |
@@ -230,13 +231,13 @@ type FoldSignals = {
 
 | field | type | what it is |
 |---|---|---|
-| `regions` | `ReservedRegion[]` | every region the system has reserved, raw. You rarely need this — the fields below are what it is for. |
+| `regions` | `ReservedRegion[]` | every region the system has reserved, raw — including the status bar on Android. You rarely need this; the fields below are what it is for. |
 | `hasFold` | `boolean` | the system declares a division: a fold, a hinge, a seam. |
 | `fold` | `ReservedRegion \| null` | that division's rect. Use `fold.width` / `fold.height` as the **gap between your panes** — it spans the crease, margins included. |
 | `foldAxis` | `"book" \| "tabletop" \| null` | which way the crease runs. `"book"` divides left from right; `"tabletop"` divides top from bottom. Derived from the region's own shape, not from a pose enum. |
 | `halves` | `{ first, second } \| null` | the two usable rects the crease leaves, in window coordinates, so you can place into one without recomputing geometry. `first` is the left or upper half. |
 | `railReserve` | `number` | how far down **the chrome's own column** the system's glyphs reach. `0` when that column is clear. This is the number that otherwise gets hard-coded. |
-| `topChrome` | `TopChrome \| null` | the free strip beside corner-anchored status chrome, for putting a bar *beside* the clock instead of below it. |
+| `topChrome` | `TopChrome \| null` | the free strip beside corner-anchored status chrome, for putting a bar *beside* the clock instead of below it. `null` whenever the chrome is centred, or spans the full top edge as an Android status bar does. |
 | `outerSide` | `"left" \| "right" \| null` | which display edge this window is flush against, when it is against one and not the other. `null` when the window fills the display. |
 | `chromeSide` | `"left" \| "right" \| null` | **which edge your toolbar belongs on.** `null` means across the top, the way a phone has always done it. |
 | `insets` | `{ top, right, bottom, left }` | the window's safe-area insets, read in the same layout pass as everything else. The same numbers `react-native-safe-area-context` gives you; they do not disagree. |
@@ -556,6 +557,8 @@ const columns =
 
 > **A child must not subtract the fold twice.** Once a pane is placed by the fold, anything inside it that *also* pads for the fold pads by a whole half of the **window** inside a pane that is itself half a window — which leaves nothing. If a component can be used both as a whole screen and as a pane, give it a prop saying which, and skip the fold padding when it is a pane. A pane in the **far** half still owes its outer edge the usual safe-area inset, though: it is against that edge.
 
+> **`crease` can be `0`.** On a foldable with a continuous display there is no physical gap, so the fold reports zero width and these two panes will meet with nothing between them. If your design wants breathing room there, floor it yourself — see [Android](#android).
+
 > **Sizing a child directly? Watch its margins.** A margin sits *outside* a width, so a card with `marginHorizontal: 16` given `width: columns.first` ends 16pt past the column, in the crease. Size the column around it instead and let the margin become breathing room from the fold.
 
 ### 7. Alerts, sheets and modals
@@ -612,7 +615,7 @@ The package converts the window into the screen's coordinate space, which is the
 
 ---
 
-## Five mistakes this package exists to prevent
+## Seven mistakes this package exists to prevent
 
 Every one of these was a real bug, found on a real device, while making [yTranslate](https://ytranslate.app) work on iPhone Duo. They are here so nobody has to find them twice.
 
@@ -625,6 +628,10 @@ Every one of these was a real bug, found on a real device, while making [yTransl
 4. **Dividing a container with `flex: 1` and calling it the fold.** Only true if the container is centred on the crease, which it is not as soon as one edge carries a rail. → `fold.x`, `fold.width`.
 
 5. **Reading the regions on a window resize.** The resize arrives *before* the window has moved to the other display, so you read the panel you are leaving. → the hook, which reports from inside UIKit's layout pass.
+
+6. **Reading a side inset as a chrome column.** Rotate an Android phone and the punch-hole camera reserves 60-odd points on an edge. It is hardware to avoid, not a home for a toolbar, and an app that put its chrome wherever the larger inset was moved its entire toolbar into a vertical rail because of a camera hole. → `chromeSide`, which also weighs whether the system is painting across the top.
+
+7. **Recomputing only when the thing you asked about changes.** Both platforms report *what* changed rather than *that* something did, so a window that moves without its regions changing tells you nothing — and the app lays out for the display it used to be on. Closing a foldable onto its outer display left the inner display's crease drawn down a phone-sized screen. → the hook, which watches layout on both platforms, not just the fold.
 
 ---
 
@@ -810,25 +817,79 @@ Note the shape of that test: `source === "native"` alone — **not** `railReserv
 |---|---|
 | **iOS 27.1+** | implemented — `reservedRegions`, an observer inside UIKit's layout pass, scene-change recovery, and shared-display placement |
 | **iOS 16.4 – 27.0** | builds and runs; returns the fallback shape with `source: "fallback"` |
-| **Android** | not yet — **and safe to ship anyway**, see below |
+| **Android** | Jetpack WindowManager — folds and cutouts. Verified on a foldable emulator; see [Android](#android) |
 | **Web / JS-only** | fallback |
 | **Expo Go** | unsupported — use a development build |
+
+### Android
+
+Folds come from **Jetpack WindowManager** (`WindowInfoTracker` + `FoldingFeature`), which is the only thing on the platform that reports a hinge — Android's inset API is as blind to one as iOS's is. Three things become `regions`:
+
+| Android | reported as |
+|---|---|
+| a separating `FoldingFeature` | `division` |
+| each `DisplayCutout` bounding rect | `occlusion` |
+| the status bar | `occlusion`, spanning the full width |
+
+The status bar is in that list deliberately. It is the piece that actually claims the top edge, and without it a corner cutout looks like chrome with a free row beside it — so a bar placed in that "free" row draws underneath the clock. Everything else is derived from those regions by the same code as iOS, so nothing above the hook knows which platform answered.
+
+Two conversions the platform makes easy to get wrong, and which this package does for you:
+
+- **`FoldingFeature.bounds` is in pixels.** React Native lays out in dp. A fold reported at `x: 1200` that is really `400` lands off the side of the screen, so everything crossing the bridge is divided by density.
+- **WindowManager is asynchronous** — a coroutine `Flow`, or a callback adapter — while layout needs an answer on the first frame. The latest layout is cached natively and the event tells JS to read it again, which is the same contract as iOS.
+
+A fold is reported as a division only when WindowManager says it **`isSeparating`**: always when half-opened, and when flat only if the hardware genuinely interrupts the display. That matches the iOS side, where a reserved region is inactive and zero-width until the device is folded. A crease you cannot see is not a crease a layout has to avoid.
+
+**What to expect, per platform.** The signals are the same shape everywhere; which of them are populated is not, because the platforms genuinely differ.
+
+| | iOS 27.1 foldable | Android foldable |
+|---|---|---|
+| `fold`, `foldAxis`, `halves` | yes, when folded | yes, when half-opened |
+| `fold.width` | a real gap (40pt on iPhone Duo) | often **`0`** — see below |
+| `chromeSide` | `"left"` / `"right"` when folded | **`null`** — Android keeps its chrome on top |
+| `topChrome` | the strip beside the clock | **`null`** — the status bar spans the full width |
+| `railReserve` | the depth of that column | **`0`** — there is no column |
+
+None of that needs a branch in your code: those are the values the recipes already treat as "nothing special here", so an Android device takes the ordinary path for chrome and the folded path for layout. **Do not** reach for `Platform.OS` to reproduce this table — it is what the package already reports.
+
+One consequence worth stating plainly: a side inset is **not** evidence of a chrome column. Rotate an Android phone and the punch-hole camera lands on an edge and reserves 60-odd points there. That is hardware to avoid, not a home for a toolbar, and `chromeSide` will correctly stay `null` while `insets.right` is large. If you are reading the insets yourself to decide where chrome goes, you will get this wrong; that is what `chromeSide` is for.
+
+**A crease can be zero points wide.** On a device whose display is continuous across the fold — the Pixel 9 Pro Fold is one — `FoldingFeature.bounds` is a zero-width line, and `fold.width` is `0`. That is honest: nothing is hidden there, and nothing has to be left empty for hardware. But it means the "use `fold.width` as the gap between your panes" recipe leaves **no gap at all** on those devices, where the same code leaves 40pt on an iPhone Duo.
+
+If you want visual separation across a seamless fold, that is a design decision rather than a measurement, so make it explicitly:
+
+```tsx
+const CREASE_BREATHING_ROOM = 16;
+const gap = Math.max(fold?.width ?? 0, CREASE_BREATHING_ROOM);
+```
+
+The package will not invent that number for you. Apple's guidance is still not to put a control *on* the crease even where you technically can draw through it.
+
+`chromeSide` works here too, and more directly than on iOS: `WindowMetricsCalculator` gives both the current window and the whole display, and the offset between them says which side of the display a split-screen app is on.
+
+> **Verified on a Pixel 9 Pro Fold emulator** (Android 15), driving a real app with no app-side changes: flat reports no division, half-opened reports one at the centre with `foldAxis: "book"`, rotating turns that into `"tabletop"`, folding onto the outer display drops it and re-measures for the smaller screen, and reopening brings it back. Not yet run on physical hardware.
 
 ### Will it crash on Android?
 
 No. Installing this in an app that also ships to Android changes nothing about the Android build or the Android app.
 
-- **Nothing is linked.** `expo-module.config.json` declares `"platforms": ["apple"]`, so Expo autolinking skips Android entirely, and there is no `android/` directory, no `build.gradle` and no `react-native.config.js`, so the React Native CLI does not see it either. Gradle has nothing to compile.
+No — and that was true before Android support existed, because the module is optional by construction:
+
 - **Nothing is required at runtime.** The module is loaded with `requireOptionalNativeModule`, which returns `null` rather than throwing when the native side is absent, and every read is guarded — `native?.isSupported?.()`, `native?.addListener`.
-- **Every field is inert**, `source` is `"fallback"`, and your null checks all take the path they take on a flat phone. Which is to say: Android renders exactly as it did before you installed anything.
+- **Every field is inert** where nothing answers, `source` is `"fallback"`, and your null checks all take the path they take on a flat phone.
+
+On a device with no fold and no cutout, Android now answers with `source: "native"` and an empty set of regions — which is a real answer, not a missing one. Either way the app renders as it did before you installed anything.
 
 This is covered by a test — `src/__tests__/fallback.test.ts` mocks the native module absent and asserts that nothing throws and every field is inert — because a crash here would not be a degraded experience, it would be an app that will not start on a platform this package does not even claim to cover.
 
-When Android support does land, it will be Jetpack WindowManager's `FoldingFeature` behind this same API: a hinge is invisible to Android's safe-area API too, so the same argument applies there.
+
 
 ---
 
 ## FAQ
+
+**Is Android tested?**
+It has been run on a Pixel 9 Pro Fold emulator, folding and unfolding a real app, and the signals behave as documented. Not yet on physical hardware. Reports welcome.
 
 **Does this work on iPad?**
 Yes, in the sense that it does no harm: an iPad reports no division, so `foldAxis` is `null` and every fold branch falls through. `chromeSide` and `outerSide` work in Split View on iOS 27.1+.
