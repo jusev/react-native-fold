@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Dimensions } from "react-native";
-import { requireOptionalNativeModule } from "expo-modules-core";
+import NativeRNFold from "./specs/NativeRNFold";
 
 /**
  * What the system has reserved, and the shape it leaves you.
@@ -219,14 +219,31 @@ type NativeModule = {
     insetLeft: number;
   };
   isSupported: () => boolean;
-  // Emitted by the package's own observer, which re-queries the regions when
-  // UIKit lays the window out — a fold, a rotation, a Split View resize.
-  addListener: (event: "onReservedRegionsChange", listener: (payload: { regions: NativeRegion[] }) => void) => { remove: () => void };
+  // Emitted by the package's own observer when the system lays the window
+  // out — a fold, a rotation, a resize, a move between displays.
+  //
+  // Carries no payload. The listener re-reads through the getters above, so
+  // there is nothing to serialise on every layout pass and nothing that can
+  // drift from what a synchronous read would return.
+  addListener: (event: "onReservedRegionsChange", listener: () => void) => { remove: () => void };
 };
 
 // Optional on purpose: this package must not be the reason an app fails to
-// start on a platform it does not cover.
-const native = requireOptionalNativeModule<NativeModule>("RNFold");
+// start on a platform it does not cover. The spec uses TurboModuleRegistry's
+// `get` rather than `getEnforcing`, so an absent module is null here instead
+// of a throw at import time.
+//
+// Adapted to one shape so that nothing below this line knows or cares how the
+// native side is registered.
+const native: NativeModule | null = NativeRNFold
+  ? {
+      getReservedRegions: () => NativeRNFold.getReservedRegions() as unknown as NativeRegion[],
+      getWindowSize: () =>
+        NativeRNFold.getWindowSize() as unknown as ReturnType<NativeModule["getWindowSize"]>,
+      isSupported: () => NativeRNFold.isSupported(),
+      addListener: (_event, listener) => NativeRNFold.onReservedRegionsChange(() => listener()),
+    }
+  : null;
 
 const toRegion = (r: NativeRegion): ReservedRegion => ({
   kind: r.kind,

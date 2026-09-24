@@ -3,18 +3,16 @@
  * throws and everything is inert.
  *
  * This is the test that matters most. The package is optional by design —
- * `requireOptionalNativeModule` returns undefined on Android, on web, on
- * iOS before 27.1, in Expo Go, and in Jest — and every one of those has to
+ * TurboModuleRegistry.get returns null on web, in Jest, and in any build
+ * where the native side is not linked — and every one of those has to
  * end with the app rendering as though the package were not installed.
  *
  * A crash here is not a degraded experience; it is an app that will not
  * start on a platform this package does not even claim to cover.
  */
 
-jest.mock("expo-modules-core", () => ({
-  // Exactly what expo-modules-core does when the native module is absent.
-  requireOptionalNativeModule: () => null,
-}));
+// Exactly what TurboModuleRegistry.get returns when the module is absent.
+jest.mock("../specs/NativeRNFold", () => ({ __esModule: true, default: null }));
 
 // The whole of react-native that this package touches. StyleSheet, View and
 // Text are here because index re-exports FoldDebugOverlay, so importing the

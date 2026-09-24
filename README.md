@@ -64,8 +64,8 @@ React Native apps get one number per edge from the safe-area API: how wide the i
 |---|---|
 | React Native | 0.76+ (New Architecture) |
 | Android | 7.0+ (API 24). Adds `androidx.window` 1.3 |
-| `expo-modules-core` | required — this is an Expo module, and works in a bare RN app via [`install-expo-modules`](https://docs.expo.dev/bare/installing-expo-modules/) |
-| iOS | builds on 16.4+; **reports regions on 27.1+**, falls back cleanly below |
+| iOS | 15.1+. Builds on Xcode 27.0 and 27.1; **reports regions on iOS 27.1+**, and reports `source: "fallback"` below |
+| Expo | not required. Works in a bare app and in an Expo dev build alike |
 | Expo Go | not supported — use a [development build](https://docs.expo.dev/develop/development-builds/introduction/) |
 
 ### Add the package
@@ -77,11 +77,11 @@ npm install @jusev/react-native-fold
 ### iOS
 
 ```sh
-npx expo prebuild -p ios     # managed projects only
 npx pod-install              # or: cd ios && pod install
+# Expo projects: npx expo prebuild -p ios first
 ```
 
-Autolinking picks the module up from `expo-module.config.json`. There is nothing to register, no native code to write, and no change to `AppDelegate`.
+React Native autolinking picks it up. There is nothing to register, no native code to write, and no change to `AppDelegate` or `MainApplication`.
 
 ---
 
@@ -167,6 +167,21 @@ In both kinds:
 
 Every value this package reports is in **points**, in the **window's own coordinate space** — which is what React Native lays out in, so you never convert anything.
 
+### Which Xcode you build with
+
+`UIView.ReservedRegion` exists only in the **iOS 27.1 SDK**, and `@available` guards the *runtime*, not the compiler — a symbol the SDK never declared is a build error whatever the availability check says. The 27.1 calls are therefore compiled out against older SDKs:
+
+```objc
+#if defined(__IPHONE_OS_VERSION_MAX_ALLOWED) && __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+```
+
+| built with | result |
+|---|---|
+| Xcode 27.1+ | full support; `source: "native"` on iOS 27.1 devices |
+| Xcode 27.0 | builds and runs; `isSupported` is `false` and `source` is `"fallback"` |
+
+So a build made on today's released Xcode installs and runs and simply reports that it cannot answer, rather than failing to compile. This is also why the iOS side is ObjC++ rather than Swift: Swift has no equivalent compile-time SDK check.
+
 ### Change detection
 
 **UIKit posts no notification when reserved regions change.** It expects a view to re-query them *while it lays out*. From JavaScript the nearest available signal is a window resize — and that arrives **before** the window has finished moving to the other display of a foldable, so reading then returns the regions of the panel you are *leaving*, and the app lays out against the wrong panel until something else disturbs it.
@@ -247,7 +262,7 @@ Same for `fold: null` — "the device is flat right now" versus "I have no idea 
 | `source` | when |
 |---|---|
 | `"native"` | iOS 27.1+ or Android, in a development build with the native module linked — the OS answered |
-| `"fallback"` | iOS below 27.1 · web · Expo Go · a missing `pod install` · Jest |
+| `"fallback"` | iOS below 27.1 · a build made with Xcode 27.0 · web · Expo Go · a missing `pod install` · Jest |
 
 Under `"fallback"` every field is the flat default: no fold, no regions, no chrome side, all zeros. That is deliberate — your foldable branches take their null path and the app behaves exactly as it did before you installed anything.
 
@@ -751,9 +766,9 @@ module.exports = mergeConfig(getDefaultConfig(__dirname), {
   // all — and watches, so edits hot-reload like any other source file.
   watchFolders: [foldPackage],
   resolver: {
-    // Keeps the package's own react / react-native / expo-modules-core
-    // imports resolving to the app's single copy. Without this you can get
-    // two Reacts, and hooks that fail at runtime for no visible reason.
+    // Keeps the package's own react / react-native imports resolving to the
+    // app's single copy. Without this you can get two Reacts, and hooks that
+    // fail at runtime for no visible reason.
     nodeModulesPaths: [path.resolve(__dirname, 'node_modules')],
   },
 });
@@ -835,8 +850,9 @@ Note the shape of that test: `source === "native"` alone — **not** `railReserv
 | | |
 |---|---|
 | **iOS 27.1+** | implemented — `reservedRegions`, an observer inside UIKit's layout pass, scene-change recovery, and shared-display placement |
-| **iOS 16.4 – 27.0** | builds and runs; returns the fallback shape with `source: "fallback"` |
+| **iOS 15.1 – 27.0** | builds and runs; returns the fallback shape with `source: "fallback"` |
 | **Android** | 7.0+ — Jetpack WindowManager; see [Android](#android) |
+| **Expo** | not required. Links in a bare app and in an Expo dev build alike |
 | **Web / JS-only** | fallback |
 | **Expo Go** | unsupported — use a development build |
 
@@ -890,7 +906,7 @@ The package will not invent that number for you. Apple's guidance is still not t
 
 No — and that was true before Android support existed, because the module is optional by construction:
 
-- **Nothing is required at runtime.** The module is loaded with `requireOptionalNativeModule`, which returns `null` rather than throwing when the native side is absent, and every read is guarded — `native?.isSupported?.()`, `native?.addListener`.
+- **Nothing is required at runtime.** The spec uses `TurboModuleRegistry.get`, not `getEnforcing`, so an absent native module is `null` rather than a throw at import, and every read is guarded.
 - **Every field is inert** where nothing answers, `source` is `"fallback"`, and your null checks all take the path they take on a flat phone.
 
 On a device with no fold and no cutout, Android now answers with `source: "native"` and an empty set of regions — which is a real answer, not a missing one. Either way the app renders as it did before you installed anything.
@@ -907,10 +923,10 @@ This is covered by a test — `src/__tests__/fallback.test.ts` mocks the native 
 Yes, in the sense that it does no harm: an iPad reports no division, so `foldAxis` is `null` and every fold branch falls through. `chromeSide` and `outerSide` work in Split View on iOS 27.1+.
 
 **Why is everything `null` in my app?**
-Check `source`. `"fallback"` means the native module did not load — usually Expo Go, a missing `pod install`, or iOS below 27.1. On Android it should read `"native"` in a development build.
+Check `source`. `"fallback"` means the native module did not answer — Expo Go, a missing `pod install`, iOS below 27.1, or a build made with the Xcode 27.0 SDK. On Android it should read `"native"` in any development build.
 
 **Can I use this without Expo?**
-Yes. It is an Expo *module*, which is not the same as requiring the Expo framework — a bare React Native app that has run [`install-expo-modules`](https://docs.expo.dev/bare/installing-expo-modules/) can use it.
+Yes. It is a plain TurboModule with no Expo dependency of any kind, and it links through React Native autolinking. It works unchanged in an Expo dev build, which links TurboModules the same way.
 
 **Does the hook cause re-renders on every layout pass?**
 No. The native side compares the regions *and* the window metrics against the last state it sent, and stays silent when nothing a caller can see has changed.
