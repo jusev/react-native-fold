@@ -235,13 +235,18 @@ type NativeModule = {
 //
 // Adapted to one shape so that nothing below this line knows or cares how the
 // native side is registered.
-const native: NativeModule | null = NativeRNFold
+// Bound to a const first. TypeScript does not carry a narrowing on an
+// imported binding into a closure that could run later, so referring to the
+// import directly inside these arrows is an error under strict null checks —
+// one a consumer compiling this source would see, even though it cannot be
+// null by the time any of them runs.
+const spec = NativeRNFold;
+const native: NativeModule | null = spec
   ? {
-      getReservedRegions: () => NativeRNFold.getReservedRegions() as unknown as NativeRegion[],
-      getWindowSize: () =>
-        NativeRNFold.getWindowSize() as unknown as ReturnType<NativeModule["getWindowSize"]>,
-      isSupported: () => NativeRNFold.isSupported(),
-      addListener: (_event, listener) => NativeRNFold.onReservedRegionsChange(() => listener()),
+      getReservedRegions: () => spec.getReservedRegions() as unknown as NativeRegion[],
+      getWindowSize: () => spec.getWindowSize() as unknown as ReturnType<NativeModule["getWindowSize"]>,
+      isSupported: () => spec.isSupported(),
+      addListener: (_event, listener) => spec.onReservedRegionsChange(() => listener()),
     }
   : null;
 

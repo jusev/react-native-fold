@@ -41,6 +41,12 @@ jobs:
       # on the missing lockfile.
       - run: npm install
 
+      - name: Typecheck
+        # 0.3.0 shipped a strict-null error in src/index.ts because the
+        # sources were only ever run through babel here, which does not type
+        # them. Consumers compile this TypeScript; CI has to as well.
+        run: npm run typecheck
+
       - name: Test
         run: npm test
 
