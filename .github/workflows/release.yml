@@ -83,12 +83,23 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # The tag's annotation is the release notes. They are written
-          # deliberately at tag time, which is better than notes generated
-          # from commit subjects.
-          NOTES="$(git tag -l --format='%(contents:body)' "$GITHUB_REF_NAME")"
+          # The tag's annotation is the release notes: written deliberately
+          # at tag time, rather than generated from commit subjects.
+          #
+          # The explicit re-fetch matters. actions/checkout leaves the tag
+          # PEELED — refs/tags/<name> points straight at the commit — so
+          # `git tag -l --format=...` finds no annotation and silently
+          # reports the commit's message instead. That is what shipped on
+          # v0.2.2: the release quoted the last commit, not the tag.
+          git fetch --force --tags origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          if [ "$(git cat-file -t "$GITHUB_REF_NAME")" != "tag" ]; then
+            echo "::error::$GITHUB_REF_NAME is not an annotated tag; its notes would be the commit message." >&2
+            exit 1
+          fi
+          NOTES="$(git for-each-ref --format='%(contents)' "refs/tags/$GITHUB_REF_NAME")"
           if [ -z "$NOTES" ]; then
-            NOTES="$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME")"
+            echo "::error::$GITHUB_REF_NAME has no annotation to use as release notes." >&2
+            exit 1
           fi
           VERSION="${GITHUB_REF_NAME#v}"
           printf '%s\n\n---\n\nOn npm: https://www.npmjs.com/package/@jusev/react-native-fold/v/%s\n' \
