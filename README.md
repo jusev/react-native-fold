@@ -663,17 +663,19 @@ import { FoldDebugOverlay } from "@jusev/react-native-fold";
 
 It is dev-only unless you explicitly ask otherwise — see [`<FoldDebugOverlay />`](#folddebugoverlay-).
 
-What it draws:
+What it draws, and the `show` part each belongs to:
 
-| | |
-|---|---|
-| **green hairlines** | the safe-area boundary. A line away from the screen edge means that edge has an inset; a line hugging the edge means the system reported nothing there. |
-| **amber outlines** | `occlusion` regions — something is drawn over this. |
-| **cyan outlines** | `division` regions — the fold. |
-| **magenta line** | the centre of the glyph band, across the whole width, so a bar of your own can be checked against the system's clock in one screenshot. |
-| **readout** | `source`, `chromeSide`, `outerSide`, the insets, `railReserve`, the fold rect, the band, and every region's frame and margins. |
+| | part | |
+|---|---|---|
+| **green hairlines** | `edges` | the safe-area boundary. A line away from the screen edge means that edge has an inset; a line hugging the edge means the system reported nothing there. |
+| **amber outlines** | `regions` | `occlusion` regions — something is drawn over this. |
+| **cyan outlines** | `regions` | `division` regions — the fold. |
+| **magenta line** | `band` | the centre of the glyph band, across the whole width, so a bar of your own can be checked against the system's clock in one screenshot. |
+| **readout** | `readout` | `source`, `chromeSide`, `outerSide`, the insets, `railReserve`, the fold rect, the band, and every region's frame and margins. |
 
-Nothing drawn at all is itself information: it means the system reported nothing, and whatever is over your content is not a reserved region.
+Narrow it with `show` when one of them is in the way — `show={["band"]}` while lining a bar up against the clock, `show={["edges", "regions"]}` when the readout is covering the header you are looking at.
+
+With everything on, nothing drawn is itself information: it means the system reported nothing, and whatever is over your content is not a reserved region.
 
 ### Reading the numbers from a log
 

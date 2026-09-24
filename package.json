@@ -1,6 +1,6 @@
 {
   "name": "@jusev/react-native-fold",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Foldable and shared-display layout signals for React Native. iPhone Duo and iOS 27.1 reserved regions, plus Android folds via Jetpack WindowManager: where the fold is, which half is which, and which edge your toolbar belongs on.",
   "keywords": [
     "android",
