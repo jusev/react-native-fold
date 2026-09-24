@@ -47,11 +47,41 @@ export type FoldDebugOverlayProps = {
    * not a flag that happened to be true.
    */
   showInProduction?: boolean;
+  /**
+   * Which parts to draw. `"full"` is everything, an array is exactly the
+   * parts you name, and `[]` draws nothing while staying mounted.
+   *
+   *     <FoldDebugOverlay />                            // full
+   *     <FoldDebugOverlay show={["regions"]} />         // outlines only
+   *     <FoldDebugOverlay show={["edges", "readout"]} />
+   *
+   * All four are on by default because the first question is usually "what
+   * does the system say", and the answer is easier to see all at once. They
+   * come apart because each one gets in the way of a different thing:
+   *
+   *   edges    four hairlines on the safe-area boundary
+   *   regions  an outline per reserved region, amber and cyan
+   *   band     the glyph band's centre line, across the full width — the one
+   *            to keep when aligning a bar of your own to the system's clock
+   *   readout  the numbers, in a box in the corner. Opaque, and it sits
+   *            exactly where a header does, so it is the part most often
+   *            worth turning off.
+   */
+  show?: "full" | FoldDebugPart[];
 };
+
+/** An individually drawable part of the overlay. */
+export type FoldDebugPart = "edges" | "regions" | "band" | "readout";
 
 const r = (n: number) => Math.round(n * 10) / 10;
 
-export default function FoldDebugOverlay({ enabled = true, showInProduction = false }: FoldDebugOverlayProps) {
+const ALL_PARTS: FoldDebugPart[] = ["edges", "regions", "band", "readout"];
+
+export default function FoldDebugOverlay({
+  enabled = true,
+  showInProduction = false,
+  show = "full",
+}: FoldDebugOverlayProps) {
   // Before anything else, and before any hook could make this conditional
   // on more than the build: a release build draws nothing unless asked.
   const allowed = __DEV__ || showInProduction;
@@ -61,66 +91,79 @@ export default function FoldDebugOverlay({ enabled = true, showInProduction = fa
 
   if (!allowed || !enabled) return null;
 
+  const parts = show === "full" ? ALL_PARTS : show;
+  const draws = (part: FoldDebugPart) => parts.includes(part);
+
   return (
     <View style={styles.root} pointerEvents="none">
       {/* The safe-area boundary, one hairline per edge. Where a line sits
           away from the screen edge, that edge has an inset; where it hugs
           the edge, the system reported nothing there. */}
-      <View style={[styles.edge, { top: insets.top, left: 0, right: 0, height: 1 }]} />
-      <View style={[styles.edge, { bottom: insets.bottom, left: 0, right: 0, height: 1 }]} />
-      <View style={[styles.edge, { left: insets.left, top: 0, bottom: 0, width: 1 }]} />
-      <View style={[styles.edge, { right: insets.right, top: 0, bottom: 0, width: 1 }]} />
+      {draws("edges") ? (
+        <>
+          <View style={[styles.edge, { top: insets.top, left: 0, right: 0, height: 1 }]} />
+          <View style={[styles.edge, { bottom: insets.bottom, left: 0, right: 0, height: 1 }]} />
+          <View style={[styles.edge, { left: insets.left, top: 0, bottom: 0, width: 1 }]} />
+          <View style={[styles.edge, { right: insets.right, top: 0, bottom: 0, width: 1 }]} />
+        </>
+      ) : null}
 
       {/* Each reserved region, outlined where the system says it is. Amber
           for an occlusion — something is drawn over this — and cyan for a
           division, the fold. Nothing drawn means the system reported
           nothing, which is itself worth seeing. */}
-      {regions.map((region, index) => (
-        <View
-          key={`${region.kind}-${index}`}
-          style={[
-            styles.region,
-            region.kind === "division" ? styles.division : styles.occlusion,
-            { left: region.x, top: region.y, width: region.width, height: region.height },
-          ]}
-        />
-      ))}
+      {draws("regions")
+        ? regions.map((region, index) => (
+            <View
+              key={`${region.kind}-${index}`}
+              style={[
+                styles.region,
+                region.kind === "division" ? styles.division : styles.occlusion,
+                { left: region.x, top: region.y, width: region.width, height: region.height },
+              ]}
+            />
+          ))
+        : null}
 
       {/* The centre of the glyph band, across the whole width, so a bar of
           your own can be checked against the system's clock in a single
           screenshot. It is NOT the middle of the reservation: the top of a
           corner reservation falls under the display's curve, and the system
           lays its glyphs out below it. */}
-      {topChrome ? <View style={[styles.band, { top: topChrome.top + topChrome.height / 2 }]} /> : null}
+      {draws("band") && topChrome ? (
+        <View style={[styles.band, { top: topChrome.top + topChrome.height / 2 }]} />
+      ) : null}
 
-      <View style={[styles.readout, { top: insets.top + 4, left: insets.left + 4 }]}>
-        <Text style={styles.text}>
-          source:{source} chrome:{chromeSide ?? "none"} outer:{outerSide ?? "none"}
-        </Text>
-        <Text style={styles.text}>
-          insets t{r(insets.top)} r{r(insets.right)} b{r(insets.bottom)} l{r(insets.left)} · reserve{" "}
-          {r(railReserve)}
-        </Text>
-        <Text style={styles.text}>
-          fold: {fold ? `${foldAxis} ${r(fold.x)},${r(fold.y)} ${r(fold.width)}×${r(fold.height)}` : "none"}
-        </Text>
-        <Text style={styles.text}>
-          band:{" "}
-          {topChrome
-            ? `${topChrome.side} w${r(topChrome.width)} t${r(topChrome.top)} h${r(topChrome.height)} of ${r(
-                topChrome.reserved
-              )}${topChrome.estimated ? " (est)" : ""}`
-            : "none"}
-        </Text>
-        {/* Each region's own frame and the margins it already includes —
-            the pair that decides where a matching row actually belongs. */}
-        {regions.map((region, index) => (
-          <Text key={`m-${index}`} style={styles.text}>
-            {region.kind[0]} {r(region.x)},{r(region.y)} {r(region.width)}×{r(region.height)} m
-            {r(region.margins.top)}/{r(region.margins.right)}/{r(region.margins.bottom)}/{r(region.margins.left)}
+      {draws("readout") ? (
+        <View style={[styles.readout, { top: insets.top + 4, left: insets.left + 4 }]}>
+          <Text style={styles.text}>
+            source:{source} chrome:{chromeSide ?? "none"} outer:{outerSide ?? "none"}
           </Text>
-        ))}
-      </View>
+          <Text style={styles.text}>
+            insets t{r(insets.top)} r{r(insets.right)} b{r(insets.bottom)} l{r(insets.left)} · reserve{" "}
+            {r(railReserve)}
+          </Text>
+          <Text style={styles.text}>
+            fold: {fold ? `${foldAxis} ${r(fold.x)},${r(fold.y)} ${r(fold.width)}×${r(fold.height)}` : "none"}
+          </Text>
+          <Text style={styles.text}>
+            band:{" "}
+            {topChrome
+              ? `${topChrome.side} w${r(topChrome.width)} t${r(topChrome.top)} h${r(topChrome.height)} of ${r(
+                  topChrome.reserved
+                )}${topChrome.estimated ? " (est)" : ""}`
+              : "none"}
+          </Text>
+          {/* Each region's own frame and the margins it already includes —
+              the pair that decides where a matching row actually belongs. */}
+          {regions.map((region, index) => (
+            <Text key={`m-${index}`} style={styles.text}>
+              {region.kind[0]} {r(region.x)},{r(region.y)} {r(region.width)}×{r(region.height)} m
+              {r(region.margins.top)}/{r(region.margins.right)}/{r(region.margins.bottom)}/{r(region.margins.left)}
+            </Text>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }

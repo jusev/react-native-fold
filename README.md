@@ -324,10 +324,30 @@ import { FoldDebugOverlay } from "@jusev/react-native-fold";
 
 Draws the safe area, every reserved region and the glyph band, and prints the numbers your layout was actually given. See [Debugging](#debugging) for what to look for.
 
-| prop | default | |
-|---|---|---|
-| `enabled` | `true` | turn it off without unmounting — a settings toggle, a shake gesture, a dev menu |
-| `showInProduction` | `false` | the deliberate escape hatch, below |
+| prop | type | default | |
+|---|---|---|---|
+| `show` | `"full"` \| `FoldDebugPart[]` | `"full"` | which parts to draw |
+| `enabled` | `boolean` | `true` | turn it off without unmounting — a settings toggle, a shake gesture, a dev menu |
+| `showInProduction` | `boolean` | `false` | the deliberate escape hatch, below |
+
+`FoldDebugPart` is `"edges" | "regions" | "band" | "readout"`. Name the parts you want; anything you leave out is not drawn.
+
+```tsx
+<FoldDebugOverlay />                             // everything
+<FoldDebugOverlay show={["regions"]} />          // outlines only
+<FoldDebugOverlay show={["band"]} />             // aligning a bar to the clock
+<FoldDebugOverlay show={["edges", "readout"]} /> // insets and the numbers
+<FoldDebugOverlay show={[]} />                   // nothing, still mounted
+```
+
+| part | draws |
+|---|---|
+| `edges` | four hairlines on the safe-area boundary |
+| `regions` | an outline per reserved region — amber for occlusions, cyan for divisions |
+| `band` | the glyph band's centre line, across the full width |
+| `readout` | the numbers, in a box in the corner |
+
+The readout is opaque and sits where a header does, so it is the part most often worth dropping.
 
 **It cannot ship by accident.** Left mounted in a release build it renders `null` and nothing else. That is not a convention or a lint rule — it is the component's first line:
 
