@@ -1,5 +1,5 @@
 import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, useWindowDimensions, View } from "react-native";
 import { useFoldSignals } from "./index";
 
 /**
@@ -88,6 +88,11 @@ export default function FoldDebugOverlay({
 
   const { regions, insets, topChrome, chromeSide, outerSide, foldAxis, fold, railReserve, source } =
     useFoldSignals();
+  // The window's own size. Not in FoldSignals, because an app that wants it
+  // has useWindowDimensions already — but a readout without it makes every
+  // other number harder to place, since "x: 795" means nothing until you
+  // know whether the window is 852 wide or 1280.
+  const window = useWindowDimensions();
 
   if (!allowed || !enabled) return null;
 
@@ -137,7 +142,10 @@ export default function FoldDebugOverlay({
       {draws("readout") ? (
         <View style={[styles.readout, { top: insets.top + 4, left: insets.left + 4 }]}>
           <Text style={styles.text}>
-            source:{source} chrome:{chromeSide ?? "none"} outer:{outerSide ?? "none"}
+            {r(window.width)}×{r(window.height)} · {source}
+          </Text>
+          <Text style={styles.text}>
+            chrome:{chromeSide ?? "none"} outer:{outerSide ?? "none"}
           </Text>
           <Text style={styles.text}>
             insets t{r(insets.top)} r{r(insets.right)} b{r(insets.bottom)} l{r(insets.left)} · reserve{" "}

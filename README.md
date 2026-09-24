@@ -345,7 +345,7 @@ Draws the safe area, every reserved region and the glyph band, and prints the nu
 | `edges` | four hairlines on the safe-area boundary |
 | `regions` | an outline per reserved region — amber for occlusions, cyan for divisions |
 | `band` | the glyph band's centre line, across the full width |
-| `readout` | the numbers, in a box in the corner |
+| `readout` | the numbers, in a box in the corner — window size, insets, and every signal |
 
 The readout is opaque and sits where a header does, so it is the part most often worth dropping.
 
@@ -671,7 +671,7 @@ What it draws, and the `show` part each belongs to:
 | **amber outlines** | `regions` | `occlusion` regions — something is drawn over this. |
 | **cyan outlines** | `regions` | `division` regions — the fold. |
 | **magenta line** | `band` | the centre of the glyph band, across the whole width, so a bar of your own can be checked against the system's clock in one screenshot. |
-| **readout** | `readout` | `source`, `chromeSide`, `outerSide`, the insets, `railReserve`, the fold rect, the band, and every region's frame and margins. |
+| **readout** | `readout` | the window size, `source`, `chromeSide`, `outerSide`, the insets, `railReserve`, the fold rect, the band, and every region's frame and margins. |
 
 Narrow it with `show` when one of them is in the way — `show={["band"]}` while lining a bar up against the clock, `show={["edges", "regions"]}` when the readout is covering the header you are looking at.
 
